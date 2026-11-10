@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>sprite sheet</title>
+<style>body{margin:0;background:#58a848}canvas{image-rendering:pixelated}</style></head>
+<body><canvas id="c" width="1500" height="1000"></canvas>
+<script type="module">
+import { decorSprite, vehicleSprite, personSprite, CAR_COLOURS, makeSailboat, makeGull, makeSaleSign } from '/js/sprites.js';
+const ctx = document.getElementById('c').getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const Z = 4;
+ctx.scale(Z, Z);
+let x = 4, y = 4, rowH = 0;
+function put(s) {
+  if (x + s.w > 1500 / Z - 4) { x = 4; y += rowH + 3; rowH = 0; }
+  ctx.drawImage(s.canvas, x, y);
+  x += s.w + 3; rowH = Math.max(rowH, s.h);
+}
+for (let i = 0; i < 10; i++) put(decorSprite('palm', i));
+for (let i = 0; i < 9; i++) put(decorSprite('tree', i));
+for (let i = 0; i < 8; i++) put(decorSprite('pine', i));
+for (let i = 0; i < 3; i++) put(decorSprite('bush', i));
+for (let i = 0; i < 6; i++) put(decorSprite('boulder', i));
+for (let i = 0; i < 8; i++) put(decorSprite('umbrella', i));
+x = 4; y += rowH + 4; rowH = 0;
+ctx.fillStyle = '#50545b'; ctx.fillRect(0, y - 2, 400, 60);
+for (let d = 0; d < 4; d++) for (let i = 0; i < 5; i++) put(vehicleSprite(CAR_COLOURS[i], d, 'car'));
+for (let d = 0; d < 4; d++) put(vehicleSprite('#f1efe8', d, 'van'));
+for (let d = 0; d < 4; d++) put(vehicleSprite('#e9822c', d, 'bus'));
+for (let i = 0; i < 20; i++) put(personSprite(i * 7, i % 2, i > 13));
+put(makeSailboat(0, false)); put(makeSailboat(1, true)); put(makeGull(0)); put(makeGull(1)); put(makeSaleSign());
+</script></body></html>

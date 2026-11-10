@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>building gallery</title>
+<style>body{margin:0;background:#4a9a3e}canvas{image-rendering:pixelated}</style></head>
+<body><canvas id="c"></canvas>
+<script type="module">
+import { BUILDINGS, TIERS, COLOURS } from '/shared/catalog.js';
+import { buildingSprite } from '/js/buildings.js';
+const q = new URLSearchParams(location.search);
+const type = q.get('type') || 'home';
+const Z = Number(q.get('z') || 3);
+const cv = document.getElementById('c');
+cv.width = 1600; cv.height = 1100;
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+ctx.scale(Z, Z);
+const t = BUILDINGS[type];
+const colours = Object.keys(COLOURS);
+let x = 4, y = 4, rowH = 0, n = 0;
+const sizes = (q.get('sizes') || '').split(',').filter(Boolean).map((s) => s.split('x').map(Number));
+const lots = sizes.length ? sizes : [t.minLot, t.maxLot];
+const floorList = (q.get('floors') || `${t.floors[0]},${t.floors[1]}`).split(',').map(Number);
+for (const style of Object.keys(t.styles)) {
+  for (const tier of Object.keys(TIERS)) {
+    for (const [w, h] of lots) {
+      for (const floors of floorList) {
+        const s = buildingSprite({ type, style, tier, floors, colour: q.get('colour') || colours[n++ % colours.length], w, h });
+        if (x + s.w > 1600 / Z - 4) { x = 4; y += rowH + 4; rowH = 0; }
+        ctx.drawImage(s.canvas, x, y);
+        x += s.w + 4; rowH = Math.max(rowH, s.h);
+      }
+    }
+  }
+}
+</script></body></html>
