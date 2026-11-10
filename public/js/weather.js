@@ -67,7 +67,7 @@ export class Weather {
       this.sky.push({ x: hash2(i, 1) * (MAP_W + 400) - 200, y: hash2(i, 2) * MAP_H, v: i % 4, speed: 5 + hash2(i, 3) * 6 });
     }
     this.drops = [];
-    for (let i = 0; i < 420; i++) this.drops.push({ x: Math.random(), y: Math.random(), s: 0.9 + Math.random() * 0.6 });
+    for (let i = 0; i < 640; i++) this.drops.push({ x: Math.random(), y: Math.random(), s: 0.9 + Math.random() * 0.6 });
     this.fogBanks = [0, 1, 2, 3, 4, 5].map((i) => ({ x: hash2(i, 9), y: 0.1 + i * 0.15, w: 0.5 + hash2(i, 5) * 0.5, speed: 0.008 + hash2(i, 6) * 0.01 }));
   }
 
@@ -138,24 +138,24 @@ export class Weather {
     if (this.fog > 0.02) {
       ctx.fillStyle = `rgba(226,234,240,${0.2 * this.fog})`;
       ctx.fillRect(0, 0, w, h);
+      // big soft banks of mist drifting across the screen
+      const smooth = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = true;
+      ctx.globalAlpha = Math.min(1, this.fog) * 0.5;
       for (const b of this.fogBanks) {
-        const bx = (((b.x + this.time * b.speed) % 1.6) - 0.4) * w;
-        const by = (b.y + Math.sin(this.time * 0.1 + b.x * 9) * 0.02) * h;
-        const bw = b.w * w;
-        const step = Math.max(4, Math.round(h * 0.012));
-        // stepped bands instead of a smooth gradient
-        for (let i = 0; i < 5; i++) {
-          ctx.fillStyle = `rgba(234,240,244,${this.fog * (0.09 + (i < 3 ? i : 4 - i) * 0.035)})`;
-          const inset = Math.abs(2 - i) * bw * 0.08;
-          ctx.fillRect(Math.round(bx + inset), Math.round(by + i * step * 2), Math.round(bw - inset * 2), step * 2);
-        }
+        const bw = b.w * w * 1.3;
+        const bx = (((b.x + this.time * b.speed) % 1.8) - 0.6) * w;
+        const by = (b.y - 0.12 + Math.sin(this.time * 0.1 + b.x * 9) * 0.02) * h;
+        ctx.drawImage(this.clouds[Math.floor(b.w * 7) % this.clouds.length], bx, by, bw, bw * 0.42);
       }
+      ctx.globalAlpha = 1;
+      ctx.imageSmoothingEnabled = smooth;
     }
     if (this.rain > 0.02) {
       const count = Math.round(this.drops.length * Math.min(1, this.rain) * Math.min(1, (w * h) / (1400 * 800)));
       const len = Math.max(2, Math.round(3 * scale));
       const px = Math.max(1, Math.round(scale * 0.5));
-      ctx.fillStyle = `rgba(206,226,255,${0.35 + this.rain * 0.3})`;
+      ctx.fillStyle = `rgba(214,232,255,${0.45 + this.rain * 0.3})`;
       for (let i = 0; i < count; i++) {
         const d = this.drops[i];
         const y = ((d.y + this.time * d.s * 1.4) % 1) * (h + 40) - 20;

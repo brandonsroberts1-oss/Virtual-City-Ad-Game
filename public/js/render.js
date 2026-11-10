@@ -14,7 +14,6 @@ import { decorSprite, makeSaleSign, sprite } from './sprites.js';
 import { buildingSprite } from './buildings.js';
 import { civicSprite } from './civic.js';
 
-const ZOOMS = [0.5, 1, 2, 3, 4];
 const ROWS = 2 * N;
 
 function diamond(fill, edge) {
@@ -54,6 +53,10 @@ export class Renderer {
     this.cam = { x: sx(N / 2, N / 2), y: sy(N / 2, N / 2) - 34, zoom: 1 };
     this.camTarget = null;
     this.dpr = 1;
+    this.levels = [1];
+    // where the "middle" of the visible map is, relative to the canvas centre
+    // (panels covering part of the screen push it aside)
+    this.viewOffset = { x: 0, y: 0 };
     this.static = Array.from({ length: ROWS }, () => []);
     this.dyn = Array.from({ length: ROWS }, () => []);
     this.structures = [];
@@ -147,6 +150,15 @@ export class Renderer {
     this.canvas.height = Math.floor(cssH * this.dpr);
     this.cssW = cssW;
     this.cssH = cssH;
+    // Zoom steps are whole numbers of device pixels per art pixel, so the
+    // pixel art stays crisp on high-density screens too.
+    this.levels = [1, 2, 3, 4, 6, 8, 12].filter((n) => n <= 4 * this.dpr).map((n) => n / this.dpr);
+    if (this.dpr === 1) this.levels.unshift(0.5);
+    this.cam.zoom = this.nearestLevel(this.cam.zoom);
+  }
+
+  nearestLevel(z) {
+    return this.levels.reduce((best, l) => (Math.abs(l - z) < Math.abs(best - z) ? l : best), this.levels[0]);
   }
 
   get scale() {
@@ -154,17 +166,18 @@ export class Renderer {
   }
 
   fitZoom() {
-    // biggest whole zoom that still shows most of the island
+    // biggest zoom step that still shows most of the island
     const z = Math.min(this.cssW / 1250, this.cssH / 720);
-    return z >= 2 ? 2 : z >= 0.9 ? 1 : 0.5;
+    const fits = this.levels.filter((l) => l <= z && l <= 2);
+    return fits.length ? fits[fits.length - 1] : this.levels[0];
   }
 
   zoomBy(step, clientX, clientY) {
-    const i = ZOOMS.indexOf(this.cam.zoom);
-    const next = ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, (i < 0 ? 1 : i) + step))];
+    const i = this.levels.indexOf(this.nearestLevel(this.cam.zoom));
+    const next = this.levels[Math.max(0, Math.min(this.levels.length - 1, i + step))];
     if (next === this.cam.zoom) return;
-    const cx = clientX ?? this.cssW / 2;
-    const cy = clientY ?? this.cssH / 2;
+    const cx = clientX ?? this.cssW / 2 + this.viewOffset.x;
+    const cy = clientY ?? this.cssH / 2 + this.viewOffset.y;
     const before = this.toWorld(cx, cy);
     this.cam.zoom = next;
     const after = this.toWorld(cx, cy);
@@ -181,6 +194,21 @@ export class Renderer {
     this.clampCam();
   }
 
+  // Move the visual centre (a panel opened or closed) without cancelling a
+  // glide that is already under way.
+  setViewOffset(x, y) {
+    const dx = (x - this.viewOffset.x) / this.cam.zoom;
+    const dy = (y - this.viewOffset.y) / this.cam.zoom;
+    this.viewOffset = { x, y };
+    this.cam.x -= dx;
+    this.cam.y -= dy;
+    if (this.camTarget) {
+      this.camTarget.x -= dx;
+      this.camTarget.y -= dy;
+    }
+    this.clampCam();
+  }
+
   clampCam() {
     this.cam.x = Math.max(-100, Math.min(MAP_W + 100, this.cam.x));
     this.cam.y = Math.max(-60, Math.min(MAP_H + 60, this.cam.y));
@@ -189,8 +217,8 @@ export class Renderer {
   // glide to a tile (used by leaderboards and "my properties")
   focusTile(x, y, zoom) {
     const h = this.world.heightAt(x, y);
-    this.camTarget = { x: sx(x, y), y: sy(x, y, h) - 20 };
-    if (zoom && this.cam.zoom < zoom) this.cam.zoom = zoom;
+    if (zoom && this.cam.zoom < zoom) this.cam.zoom = this.nearestLevel(zoom);
+    this.camTarget = { x: sx(x, y) - this.viewOffset.x / this.cam.zoom, y: sy(x, y, h) - 20 - this.viewOffset.y / this.cam.zoom };
   }
 
   toWorld(clientX, clientY) {

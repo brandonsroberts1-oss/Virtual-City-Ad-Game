@@ -24,7 +24,6 @@ class HttpError extends Error {
 
 function cleanText(v, max) {
   if (typeof v !== 'string') return '';
-  // eslint-disable-next-line no-control-regex
   return v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
@@ -49,9 +48,13 @@ export function cleanUrl(v) {
   }
 }
 
-function limiter(max, windowMs) {
+function limiter(max, windowMs, enabled = true) {
   const hits = new Map();
   return (req, res, next) => {
+    if (!enabled) {
+      next();
+      return;
+    }
     const now = Date.now();
     if (hits.size > 20000) for (const [k, e] of hits) if (e.reset < now) hits.delete(k);
     const key = req.ip || 'unknown';
@@ -161,19 +164,23 @@ export function createApp({ db, payments, env = {} }) {
 
   // Turn a paid order into a property or a donation. Safe to call twice.
   function finalizeOrder(orderId, ref) {
-    return transaction(db, () => {
+    const out = transaction(db, () => {
       const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
       if (!order) throw new HttpError(404, 'Order not found.');
-      if (order.status === 'paid') return JSON.parse(order.result);
-      if (order.status !== 'pending') throw new HttpError(409, `This order is ${order.status}.`);
+      if (order.status === 'paid') return { result: JSON.parse(order.result) };
+      // A buyer can back out of the checkout page and still pay on it later,
+      // so money can arrive for an order we had already released. Honour it
+      // if the lot is still free (the check below flags it otherwise).
+      if (!['pending', 'cancelled', 'expired'].includes(order.status)) throw new HttpError(409, `This order is ${order.status}.`);
       const p = JSON.parse(order.payload);
       const now = Date.now();
       let result;
       if (order.kind === 'property') {
         const lot = world.checkLot(p.x, p.y, p.w, p.h, occupiedTiles(order.id));
         if (!lot.ok) {
+          // recorded (not thrown) so the "conflict" mark survives the commit
           setOrder(order.id, 'conflict', { ref });
-          throw new HttpError(409, 'Sorry, that lot was taken while you were checking out.');
+          return { conflict: true };
         }
         const price = quote(p, lot.zones);
         const info = db
@@ -190,9 +197,19 @@ export function createApp({ db, payments, env = {} }) {
       }
       setOrder(order.id, 'paid', { ref, result });
       bump();
-      return result;
+      return { result };
     });
+    if (out.conflict) throw new HttpError(409, 'Sorry, that lot was taken while you were checking out.');
+    return out.result;
   }
+
+  // The provider's own error text is for the server log, not for visitors.
+  const checkoutFailed = (err) => {
+    console.error(`checkout could not be started: ${err.message}`);
+    const e = new HttpError(502, 'We could not start the checkout just now. Nothing was charged; please try again in a moment.');
+    e.expose = true;
+    return e;
+  };
 
   const getProperty = (id) => {
     const row = db.prepare(`${PROPERTY_SELECT} WHERE p.id = ?`).get(id);
@@ -249,9 +266,11 @@ export function createApp({ db, payments, env = {} }) {
   });
 
   const requireUser = (req, res, next) => (req.user ? next() : next(new HttpError(401, 'Please sign in first.')));
-  const writeLimit = limiter(40, 60 * 1000);
-  const authLimit = limiter(12, 60 * 1000);
-  const trafficLimit = limiter(240, 60 * 1000);
+  // per-IP limits; RATE_LIMITS=off turns them off (used by the test suite)
+  const limits = env.RATE_LIMITS !== 'off';
+  const writeLimit = limiter(40, 60 * 1000, limits);
+  const authLimit = limiter(12, 60 * 1000, limits);
+  const trafficLimit = limiter(240, 60 * 1000, limits);
 
   // ---- config + accounts -------------------------------------------------------
 
@@ -343,7 +362,7 @@ export function createApp({ db, payments, env = {} }) {
       });
     } catch (err) {
       setOrder(order.id, 'failed');
-      throw new HttpError(502, err.message);
+      throw checkoutFailed(err);
     }
     if (pay.status === 'paid') {
       const result = finalizeOrder(order.id, pay.ref);
@@ -445,7 +464,7 @@ export function createApp({ db, payments, env = {} }) {
       });
     } catch (err) {
       setOrder(order.id, 'failed');
-      throw new HttpError(502, err.message);
+      throw checkoutFailed(err);
     }
     if (pay.status === 'paid') {
       const result = finalizeOrder(order.id, pay.ref);
@@ -480,11 +499,15 @@ export function createApp({ db, payments, env = {} }) {
     res.json({ id: o.id, kind: o.kind, status: o.status, result, property: result?.propertyId ? getProperty(result.propertyId) : null });
   });
 
-  api.post('/orders/:id/cancel', (req, res) => {
-    const o = db.prepare('SELECT status FROM orders WHERE id = ?').get(String(req.params.id));
-    if (o?.status === 'pending') setOrder(String(req.params.id), 'cancelled');
+  api.post('/orders/:id/cancel', wrap(async (req, res) => {
+    const o = db.prepare('SELECT status, provider_ref FROM orders WHERE id = ?').get(String(req.params.id));
+    if (o?.status === 'pending') {
+      setOrder(String(req.params.id), 'cancelled');
+      // also close the hosted checkout page so it cannot be paid later
+      if (payments.cancel && o.provider_ref) await payments.cancel(o.provider_ref);
+    }
     res.json({ ok: true });
-  });
+  }));
 
   // ---- admin (set ADMIN_TOKEN to enable) -----------------------------------------
 
@@ -522,11 +545,10 @@ export function createApp({ db, payments, env = {} }) {
   app.use('/shared', express.static(path.join(ROOT, 'shared')));
   app.use(express.static(path.join(ROOT, 'public')));
 
-  // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     const status = err.status || (err.type === 'entity.parse.failed' ? 400 : err.type === 'entity.too.large' ? 413 : 500);
-    if (status >= 500) console.error(err);
-    res.status(status).json({ error: status >= 500 ? 'Something went wrong on our side.' : err.message });
+    if (status >= 500 && !err.expose) console.error(err);
+    res.status(status).json({ error: status >= 500 && !err.expose ? 'Something went wrong on our side.' : err.message });
   });
 
   return app;

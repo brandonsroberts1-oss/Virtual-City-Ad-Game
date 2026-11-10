@@ -33,6 +33,9 @@ function makeWindow(title, body, onClose, extraClass = '') {
 
 let sideClose = null;
 
+// main.js sets hooks.side to hear when the side card opens or closes.
+export const hooks = { side: null };
+
 // The card on the right-hand side (a property's ad or a donation form).
 export function openSide(title, body, onClose) {
   closeSide();
@@ -40,6 +43,7 @@ export function openSide(title, body, onClose) {
   const win = makeWindow(title, body, () => closeSide());
   root.append(win);
   sideClose = onClose || null;
+  if (hooks.side) hooks.side(true);
   return win;
 }
 
@@ -50,6 +54,7 @@ export function closeSide() {
   const cb = sideClose;
   sideClose = null;
   if (cb) cb();
+  if (hooks.side) hooks.side(false);
 }
 
 // A centred dialog with a dimmed backdrop.

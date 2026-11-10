@@ -52,6 +52,15 @@ export function createPayments(env = process.env, fetchImpl = globalThis.fetch) 
       return { status: 'redirect', url: json.url, ref: json.id };
     },
 
+    // Best effort: expire a checkout page the buyer walked away from.
+    async cancel(sessionId) {
+      try {
+        await fetchImpl(`${STRIPE_API}/${encodeURIComponent(sessionId)}/expire`, { method: 'POST', headers: { Authorization: `Bearer ${key}` } });
+      } catch {
+        // if this fails the session simply expires on its own later
+      }
+    },
+
     // Verify the Stripe-Signature header and return the parsed event.
     // Throws if the signature is missing, wrong or too old.
     parseWebhook(rawBody, signatureHeader, now = Date.now()) {
