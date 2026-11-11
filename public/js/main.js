@@ -402,6 +402,7 @@ async function boot() {
   } catch (e) {
     toast(e.message, 'bad');
   }
+  if (app.config.preview) toast('Preview site: the buildings are samples, and anything added here is cleared regularly.', '', 9000);
   const pid = Number(params.get('p'));
   if (pid && app.byId.has(pid)) ui.openProperty(pid, true);
   await handleReturnFromCheckout(params);

@@ -10,7 +10,41 @@ and the busiest ones.
 "Brand Island" is a working title. Change it in `shared/catalog.js` (`SITE`)
 and in the `<title>` of `public/index.html`.
 
-## Run it
+## Launch it (works from a phone)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/brandonsroberts1-oss/Virtual-City-Ad-Game)
+
+1. Tap the button. It opens [Render](https://render.com), a hosting service;
+   sign in with your GitHub account.
+2. Render shows what it is about to set up (one web service called
+   `brand-island`). Approve it and wait a few minutes while it builds.
+3. Open the `onrender.com` address shown at the top of the service page.
+   That is your island, live on the internet.
+
+What you get is a **free preview**, set up by `render.yaml`:
+
+- It goes to sleep when nobody has visited for a while; the next visit takes
+  about a minute to wake it.
+- It forgets everything (accounts, buildings, donations) each time it sleeps
+  or is updated, because free instances have no permanent storage. So it
+  fills the island with made-up sample buildings each time it starts and
+  tells visitors it is a preview.
+- Payments are in demo mode: nothing is charged.
+- Every change pushed to this repository is put live automatically.
+
+### Keeping what people build
+
+To run the island for real it needs a paid instance with a disk (Render's
+smallest paid instance plus 1 GB of disk; see their pricing page). Open
+`render.yaml` in GitHub, edit it (the pencil icon), make the four changes
+marked `FOR REAL USE`, and commit. Render picks the change up by itself; if it
+stops to ask for a payment method, add one in Render and it carries on. From
+then on nothing is forgotten and the sample buildings are removed.
+
+Then set up real payments (see "Taking real payments" below) by adding the
+Stripe keys under **Environment** on the service page in Render.
+
+## Run it on a computer
 
 You need [Node.js](https://nodejs.org) 22.13 or newer.
 
@@ -132,13 +166,16 @@ curl -H "x-admin-token: $ADMIN_TOKEN" https://your-site/api/admin/donations
 The first removes a property (for example an ad that breaks your rules) and
 puts its lot back on sale. There is no automatic moderation of ad text.
 
-## Hosting
+## Hosting it somewhere else
 
-One Node process and one SQLite file (`data/island.db`).
+One Node process and one SQLite file (`island.db` in `DATA_DIR`). The
+`Dockerfile` runs it on any host that takes a container; without Docker,
+`npm install` then `npm start` on Node 22.13 or newer does the same.
 
 - Keep `DATA_DIR` on a disk that survives restarts and back it up.
 - Serve it over https and set `NODE_ENV=production` (secure cookies).
 - Behind a proxy or load balancer set `TRUST_PROXY=1`.
+- Set `PUBLIC_URL` to the site's address (on Render it is detected for you).
 - Rate limits and traffic de-duplication are kept in memory, so run a single
   instance.
 
@@ -156,7 +193,9 @@ shared/catalog.js    site name, prices, building catalogue, colours, charities
 server/app.js        the API: accounts, quotes, purchases, traffic, donations, leaderboards
 server/payments.js   demo and Stripe payment providers
 server/db.js         SQLite schema
-server/seed.js       sample data
+server/samples.js    made-up sample data (npm run seed, or SAMPLE_DATA=on)
+render.yaml          one-tap setup for Render
+Dockerfile           container recipe for any other host
 public/js/render.js  camera, layered drawing, picking
 public/js/terrain.js ground and road rasteriser
 public/js/surf.js    waves and shallows

@@ -84,7 +84,8 @@ export function createApp({ db, payments, env = {} }) {
   const traffic = new Map();
 
   app.disable('x-powered-by');
-  if (env.TRUST_PROXY) app.set('trust proxy', 1);
+  // TRUST_PROXY=1 (or a number of proxy hops) when running behind a load balancer
+  if (env.TRUST_PROXY) app.set('trust proxy', Number(env.TRUST_PROXY) || 1);
 
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -275,7 +276,8 @@ export function createApp({ db, payments, env = {} }) {
   // ---- config + accounts -------------------------------------------------------
 
   api.get('/config', (req, res) => {
-    res.json({ site: SITE, payments: payments.mode });
+    // "preview" = a throwaway site showing sample data; the UI warns visitors
+    res.json({ site: SITE, payments: payments.mode, preview: String(env.SAMPLE_DATA || '').toLowerCase() === 'on' });
   });
 
   api.get('/me', (req, res) => {

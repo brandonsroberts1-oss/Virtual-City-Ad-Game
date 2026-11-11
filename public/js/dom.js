@@ -75,10 +75,10 @@ export function modalOpen() {
   return !!$('#modals').firstChild;
 }
 
-export function toast(message, kind = '') {
+export function toast(message, kind = '', ms = kind === 'bad' ? 5200 : 3600) {
   const el = h('div', { class: `toast ${kind}`, text: message });
   $('#toasts').append(el);
-  setTimeout(() => el.remove(), kind === 'bad' ? 5200 : 3600);
+  setTimeout(() => el.remove(), ms);
 }
 
 // Draw a pixel sprite centred in a canvas at the largest whole-number scale

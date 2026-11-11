@@ -40,6 +40,9 @@ function field(label, input, max) {
 export function createUI(app) {
   const ui = {};
 
+  // shown on throwaway preview sites so nobody is surprised when things vanish
+  const previewNote = () => (app.config.preview ? h('p', { class: 'note', text: 'This is a preview site. Everything added here, accounts included, is cleared regularly.' }) : null);
+
   // ===========================================================================
   // Build panel
   // ===========================================================================
@@ -272,6 +275,7 @@ export function createUI(app) {
         app.config.payments === 'demo'
           ? h('p', { class: 'note', text: 'Demo mode: this site is not taking real payments yet, so confirming builds straight away at no charge.' })
           : h('p', { class: 'small muted', text: 'You will be taken to Stripe to pay. Your lot is held for 30 minutes while you check out.' }),
+        previewNote(),
         err,
         confirm,
       ),
@@ -576,7 +580,7 @@ export function createUI(app) {
       err.textContent = '';
       paint();
     };
-    const form = h('form', { class: 'stack', novalidate: true }, reason ? h('p', { class: 'note', text: reason }) : null, nameRow, field('Email', email), field('Password', password), err, submit, h('div', { class: 'center' }, swap));
+    const form = h('form', { class: 'stack', novalidate: true }, reason ? h('p', { class: 'note', text: reason }) : null, previewNote(), nameRow, field('Email', email), field('Password', password), err, submit, h('div', { class: 'center' }, swap));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       submit.disabled = true;
@@ -619,6 +623,7 @@ export function createUI(app) {
         h('h3', { text: 'Getting around' }),
         h('p', { text: 'Drag to move, scroll or pinch to zoom, click a building to read its ad. Arrow keys and + / - work too.' }),
         app.config.payments === 'demo' ? h('p', { class: 'note', text: 'This site is running in demo mode: purchases and donations are recorded but no money changes hands.' }) : null,
+        previewNote(),
       ),
     );
   };

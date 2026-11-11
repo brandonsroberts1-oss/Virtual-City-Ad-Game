@@ -1,0 +1,46 @@
+# One-tap launch on Render (https://render.com). The "Deploy to Render" button
+# at the top of the README reads this file.
+#
+# As written this is a FREE PREVIEW:
+#   - the site goes to sleep when nobody has visited for a while and takes
+#     about a minute to wake up again;
+#   - it forgets everything (accounts, buildings, donations) each time it
+#     sleeps or is redeployed, because free instances have no permanent disk;
+#   - so it fills the island with made-up sample buildings every time it starts
+#     and tells visitors it is a preview (SAMPLE_DATA below).
+#
+# To run it for real (a paid instance with a disk, so nothing is forgotten),
+# make the four changes marked "FOR REAL USE" and save. Render picks the
+# change up by itself. See "Keeping what people build" in the README.
+
+services:
+  - type: web
+    name: brand-island
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/config
+
+    # FOR REAL USE (1 of 4): change "free" to "starter"
+    plan: free
+
+    # FOR REAL USE (2 of 4): remove the "# " at the start of the next four lines
+    # disk:
+    #   name: island-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: ADMIN_TOKEN
+        generateValue: true
+
+      # FOR REAL USE (3 of 4): change "on" to "off" (removes the sample buildings)
+      - key: SAMPLE_DATA
+        value: "on"
+
+      # FOR REAL USE (4 of 4): remove the "# " at the start of the next two lines
+      # - key: DATA_DIR
+      #   value: /var/data
