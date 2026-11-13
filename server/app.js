@@ -6,13 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createWorld } from '../shared/world.js';
-import { SITE, BUILDINGS, CHARITIES, DONATION, LIMITS, validateSpec, quote } from '../shared/catalog.js';
+import { SITE, BUILDINGS, CHARITIES, GIVING, DONATION, LIMITS, validateSpec, quote } from '../shared/catalog.js';
 import { transaction } from './db.js';
+import { parseLogo } from './png.js';
 import { SESSION_COOKIE, hashPassword, verifyPassword, createSession, destroySession, userForToken, parseCookies } from './auth.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VISITOR_COOKIE = 'bi_vid';
-const HOLD_MS = 30 * 60 * 1000;          // how long an unpaid checkout reserves its lot
+const HOLD_MS = 33 * 60 * 1000;          // how long an unpaid checkout reserves its lot
 const TRAFFIC_WINDOW_MS = 30 * 60 * 1000; // one counted view per visitor per property per window
 
 class HttpError extends Error {
@@ -128,9 +129,15 @@ export function createApp({ db, payments, env = {} }) {
     owner: r.owner_name,
     ownerId: r.owner_id,
     createdAt: r.created_at,
+    // the picture itself is fetched separately; the version busts caches
+    logo: r.has_logo ? `/api/properties/${r.id}/logo?v=${r.logo_v}` : null,
   });
 
-  const PROPERTY_SELECT = 'SELECT p.*, u.name AS owner_name FROM properties p JOIN users u ON u.id = p.owner_id';
+  // every column except the logo picture, which can be large
+  const PROPERTY_COLS = ['id', 'owner_id', 'type', 'style', 'tier', 'colour', 'floors', 'x', 'y', 'w', 'h', 'name', 'url', 'message', 'zone', 'address', 'land_cents', 'build_cents', 'value_cents', 'views', 'clicks', 'created_at', 'logo_v']
+    .map((c) => `p.${c}`)
+    .join(', ');
+  const PROPERTY_SELECT = `SELECT ${PROPERTY_COLS}, (p.logo IS NOT NULL) AS has_logo, u.name AS owner_name FROM properties p JOIN users u ON u.id = p.owner_id`;
 
   const addRect = (set, r) => {
     for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) set.add(world.ti(x, y));
@@ -186,9 +193,9 @@ export function createApp({ db, payments, env = {} }) {
         const price = quote(p, lot.zones);
         const info = db
           .prepare(
-            'INSERT INTO properties (owner_id, type, style, tier, colour, floors, x, y, w, h, name, url, message, zone, address, land_cents, build_cents, value_cents, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO properties (owner_id, type, style, tier, colour, floors, x, y, w, h, name, url, message, zone, address, land_cents, build_cents, value_cents, created_at, logo, logo_v) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           )
-          .run(order.user_id, p.type, p.style, p.tier, p.colour, p.floors, p.x, p.y, p.w, p.h, p.name, p.url, p.message, lot.zone, lot.address, price.land, price.build, price.total, now);
+          .run(order.user_id, p.type, p.style, p.tier, p.colour, p.floors, p.x, p.y, p.w, p.h, p.name, p.url, p.message, lot.zone, lot.address, price.land, price.build, price.total, now, p.logo ? Buffer.from(p.logo, 'base64') : null, p.logo ? 1 : 0);
         result = { propertyId: Number(info.lastInsertRowid) };
       } else {
         const info = db
@@ -217,42 +224,73 @@ export function createApp({ db, payments, env = {} }) {
     return row ? publicProperty(row) : null;
   };
 
-  // ---- Stripe webhook (needs the raw body, so it sits before the JSON parser) --
+  // Ask the payment processor whether an order that is still waiting has been
+  // paid, and complete or release it accordingly. Safe to call at any time.
+  async function settle(orderId) {
+    const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+    if (!order || order.status !== 'pending' || !order.provider_ref || !payments.check) return;
+    let state;
+    try {
+      state = await payments.check(order);
+    } catch (err) {
+      console.error(`payment check for order ${order.id} failed: ${err.message}`);
+      return;
+    }
+    if (state === 'paid') {
+      try {
+        finalizeOrder(order.id, order.provider_ref);
+      } catch (err) {
+        // money was taken for a lot that is gone: recorded as "conflict" for a refund
+        console.error(`could not complete paid order ${order.id}: ${err.message}`);
+      }
+    } else if (state === 'failed' || Date.now() - order.created_at > HOLD_MS) {
+      setOrder(order.id, 'expired');
+    }
+  }
 
-  app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res) => {
-    if (payments.mode !== 'stripe') {
+  // Run by the server once a minute: settles checkouts whose buyers never
+  // came back to the site (closed the tab, lost signal ...).
+  app.locals.sweep = async () => {
+    const waiting = db.prepare("SELECT id FROM orders WHERE status = 'pending' AND provider_ref IS NOT NULL AND created_at < ?").all(Date.now() - 20000);
+    for (const o of waiting) await settle(o.id);
+  };
+
+  // ---- processor notifications (need the raw body, so they sit before the JSON parser)
+
+  const onWebhook = (req, res) => {
+    if (!payments.webhook) {
       res.status(404).json({ error: 'Not enabled.' });
       return;
     }
-    let event;
+    let note;
     try {
-      event = payments.parseWebhook(req.body.toString('utf8'), req.headers['stripe-signature']);
+      note = payments.webhook(req.body.toString('utf8'), req.headers);
     } catch (err) {
       res.status(400).json({ error: err.message });
       return;
     }
-    const session = event?.data?.object || {};
-    const orderId = session.client_reference_id || session.metadata?.order_id;
     try {
-      if (event.type === 'checkout.session.completed' && session.payment_status === 'paid' && orderId) {
-        finalizeOrder(orderId, session.id);
-      } else if (event.type === 'checkout.session.expired' && orderId) {
-        const order = db.prepare('SELECT status FROM orders WHERE id = ?').get(orderId);
-        if (order?.status === 'pending') setOrder(orderId, 'expired');
+      if (note.status === 'paid' && note.orderId) {
+        finalizeOrder(note.orderId, note.ref);
+      } else if (note.status === 'expired' && note.orderId) {
+        const order = db.prepare('SELECT status FROM orders WHERE id = ?').get(note.orderId);
+        if (order?.status === 'pending') setOrder(note.orderId, 'expired');
       }
     } catch (err) {
       // A conflict here means money was taken for a lot that is gone; it is
       // recorded on the order (status "conflict") for a manual refund.
-      console.error(`webhook: could not complete order ${orderId}: ${err.message}`);
+      console.error(`webhook: could not complete order ${note.orderId}: ${err.message}`);
     }
     res.json({ received: true });
-  });
+  };
+  app.post('/api/payments/webhook', express.raw({ type: '*/*', limit: '1mb' }), onWebhook);
+  app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), onWebhook); // older address
 
   // ---- API middleware --------------------------------------------------------
 
   const api = express.Router();
   app.use('/api', api);
-  api.use(express.json({ limit: '20kb' }));
+  api.use(express.json({ limit: '300kb' })); // room for a logo picture
   api.use((req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     // State-changing calls must be JSON: browsers cannot send that cross-site
@@ -277,7 +315,7 @@ export function createApp({ db, payments, env = {} }) {
 
   api.get('/config', (req, res) => {
     // "preview" = a throwaway site showing sample data; the UI warns visitors
-    res.json({ site: SITE, payments: payments.mode, preview: String(env.SAMPLE_DATA || '').toLowerCase() === 'on' });
+    res.json({ site: SITE, payments: payments.mode, paymentLabel: payments.label, preview: String(env.SAMPLE_DATA || '').toLowerCase() === 'on' });
   });
 
   api.get('/me', (req, res) => {
@@ -350,10 +388,12 @@ export function createApp({ db, payments, env = {} }) {
     const link = cleanUrl(req.body.url);
     if (name.length < 2) throw new HttpError(400, 'Give your property a name (your brand, for example).');
     if (!link.ok) throw new HttpError(400, 'That website address does not look right. Use a normal http(s) link.');
+    const logo = parseLogo(req.body.logo);
+    if (!logo.ok) throw new HttpError(400, logo.reason);
     const lot = world.checkLot(x, y, v.spec.w, v.spec.h, occupiedTiles());
     if (!lot.ok) throw new HttpError(409, lot.reason);
     const price = quote(v.spec, lot.zones);
-    const order = createOrder('property', req.user.id, { ...v.spec, x, y, name, url: link.url, message }, price.total);
+    const order = createOrder('property', req.user.id, { ...v.spec, x, y, name, url: link.url, message, logo: logo.bytes ? logo.bytes.toString('base64') : null }, price.total);
     let pay;
     try {
       pay = await payments.start(order, {
@@ -381,6 +421,16 @@ export function createApp({ db, payments, env = {} }) {
     res.json({ property: p });
   });
 
+  api.get('/properties/:id/logo', (req, res) => {
+    const row = db.prepare('SELECT logo FROM properties WHERE id = ?').get(Number(req.params.id));
+    if (!row || !row.logo) throw new HttpError(404, 'No logo.');
+    // Uploaded bytes are only ever served as a PNG image, never as a page.
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Security-Policy', "default-src 'none'");
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.end(Buffer.from(row.logo));
+  });
+
   api.patch('/properties/:id', writeLimit, requireUser, (req, res) => {
     const id = Number(req.params.id);
     const row = db.prepare('SELECT owner_id FROM properties WHERE id = ?').get(id);
@@ -391,7 +441,11 @@ export function createApp({ db, payments, env = {} }) {
     const link = cleanUrl(req.body.url);
     if (name.length < 2) throw new HttpError(400, 'Give your property a name.');
     if (!link.ok) throw new HttpError(400, 'That website address does not look right. Use a normal http(s) link.');
+    // logo: leave out to keep it, null to remove it, a PNG to replace it
+    const logo = req.body.logo === undefined ? null : parseLogo(req.body.logo);
+    if (logo && !logo.ok) throw new HttpError(400, logo.reason);
     db.prepare('UPDATE properties SET name = ?, url = ?, message = ? WHERE id = ?').run(name, link.url, message, id);
+    if (logo) db.prepare('UPDATE properties SET logo = ?, logo_v = logo_v + 1 WHERE id = ?').run(logo.bytes, id);
     bump();
     res.json({ property: getProperty(id) });
   });
@@ -446,6 +500,32 @@ export function createApp({ db, payments, env = {} }) {
     res.json({ civic: { id: civic.id, name: civic.name, kind: civic.kind }, charity: { id: civic.charity, ...charity }, totalCents: total.cents, count: total.n, top, recent });
   });
 
+  // Everything a visitor needs to judge the giving side of the island: who
+  // the money is for, how to check they are real, and every gift so far.
+  api.get('/charities', (req, res) => {
+    const charities = Object.entries(CHARITIES).map(([id, c]) => {
+      const t = db.prepare('SELECT COALESCE(SUM(amount_cents), 0) AS cents, COUNT(*) AS n FROM donations WHERE charity = ?').get(id);
+      const best = db.prepare(`SELECT MAX(donor_name) AS name, SUM(amount_cents) AS cents FROM donations WHERE charity = ? GROUP BY ${donorKey} ORDER BY cents DESC LIMIT 1`).get(id);
+      return {
+        id,
+        name: c.name,
+        blurb: c.blurb,
+        about: c.about || '',
+        url: cleanUrl(c.url).url || '',
+        registration: c.registration || '',
+        verifyUrl: cleanUrl(c.verifyUrl).url || '',
+        placeholder: c.placeholder !== false,
+        places: world.civics.filter((v) => v.charity === id).map((v) => ({ id: v.id, name: v.name })),
+        totalCents: t.cents,
+        gifts: t.n,
+        topDonor: best || null,
+      };
+    });
+    const recent = db.prepare('SELECT donor_name AS name, amount_cents AS cents, charity, created_at AS at FROM donations ORDER BY id DESC LIMIT 12').all();
+    const all = db.prepare('SELECT COALESCE(SUM(amount_cents), 0) AS cents, COUNT(*) AS n FROM donations').get();
+    res.json({ charities, recent, totalCents: all.cents, gifts: all.n, statement: GIVING.statement || '', payments: payments.mode });
+  });
+
   api.post('/donations', writeLimit, wrap(async (req, res) => {
     const civic = world.civics.find((c) => c.id === req.body.civicId);
     if (!civic) throw new HttpError(404, 'No such place.');
@@ -494,12 +574,14 @@ export function createApp({ db, payments, env = {} }) {
 
   // ---- orders (used when returning from a hosted checkout page) -------------------
 
-  api.get('/orders/:id', (req, res) => {
-    const o = db.prepare('SELECT id, kind, status, result FROM orders WHERE id = ?').get(String(req.params.id));
+  api.get('/orders/:id', wrap(async (req, res) => {
+    const id = String(req.params.id);
+    await settle(id); // no-op unless it is still waiting for payment
+    const o = db.prepare('SELECT id, kind, status, result FROM orders WHERE id = ?').get(id);
     if (!o) throw new HttpError(404, 'Order not found.');
     const result = o.result ? JSON.parse(o.result) : null;
     res.json({ id: o.id, kind: o.kind, status: o.status, result, property: result?.propertyId ? getProperty(result.propertyId) : null });
-  });
+  }));
 
   api.post('/orders/:id/cancel', wrap(async (req, res) => {
     const o = db.prepare('SELECT status, provider_ref FROM orders WHERE id = ?').get(String(req.params.id));

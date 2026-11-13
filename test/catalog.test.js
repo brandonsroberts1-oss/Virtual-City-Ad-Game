@@ -32,7 +32,8 @@ test('every catalogue entry can be priced', () => {
   for (const [type, t] of Object.entries(BUILDINGS)) {
     for (const style of Object.keys(t.styles)) {
       for (const tier of Object.keys(TIERS)) {
-        const spec = { type, style, tier, colour: Object.keys(COLOURS)[0], floors: t.floors[0], w: t.minLot[0], h: t.minLot[1] };
+        const [w, h] = t.styles[style].minLot || t.minLot;
+        const spec = { type, style, tier, colour: Object.keys(COLOURS)[0], floors: t.floors[0], w, h };
         assert.equal(validateSpec(spec).ok, true);
         const q = quote(spec, { town: spec.w * spec.h });
         assert.ok(Number.isInteger(q.total) && q.total > 0);
@@ -42,13 +43,26 @@ test('every catalogue entry can be priced', () => {
   }
 });
 
-test('location drives land price: summit > waterfront > hillside > ocean view > town', () => {
+test('location drives land price, from town up to the summit', () => {
   const price = (zone) => quote(home, { [zone]: 1 }).land;
-  assert.ok(price('summit') > price('waterfront'));
-  assert.ok(price('waterfront') > price('hillside'));
-  assert.ok(price('hillside') > price('oceanview'));
-  assert.ok(price('oceanview') > price('town'));
+  const order = ['town', 'downtown', 'oceanview', 'hillside', 'ridge', 'waterfront', 'summit'];
+  for (let i = 1; i < order.length; i++) assert.ok(price(order[i]) > price(order[i - 1]), `${order[i]} should cost more than ${order[i - 1]}`);
   assert.equal(price('town'), LAND.basePerTile);
+  assert.deepEqual(Object.keys(LAND.zones).sort(), order.slice().sort());
+});
+
+test('skyscrapers go up to 60 floors and 5x5 lots, and landmark styles cost more', () => {
+  const tower = { type: 'skyscraper', style: 'slab', tier: 'standard', colour: 'slate', floors: 60, w: 5, h: 5 };
+  assert.equal(validateSpec(tower).ok, true);
+  assert.equal(validateSpec({ ...tower, floors: 61 }).ok, false);
+  assert.equal(validateSpec({ ...tower, w: 6 }).ok, false);
+  const cost = (style) => quote({ ...tower, style }, { town: 25 }).build;
+  const styles = ['slab', 'setback', 'twin', 'glass', 'rotunda', 'deco', 'crystal', 'citadel'];
+  assert.deepEqual(Object.keys(BUILDINGS.skyscraper.styles), styles);
+  for (let i = 1; i < styles.length; i++) assert.ok(cost(styles[i]) > cost(styles[i - 1]), `${styles[i]} should cost more than ${styles[i - 1]}`);
+  // the multi-tower citadel needs room
+  assert.match(validateSpec({ ...tower, style: 'citadel', w: 2, h: 2 }).reason, /at least 3x3/);
+  assert.equal(validateSpec({ ...tower, style: 'citadel', w: 3, h: 3 }).ok, true);
 });
 
 test('bigger, taller, fancier and more luxurious all cost more', () => {

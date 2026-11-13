@@ -9,7 +9,7 @@ before(async () => {
 });
 after(() => app.close());
 
-const LOT = { x: 14, y: 44 }; // a waterfront lot on Ocean Drive
+const LOT = { x: 20, y: 99 }; // a waterfront lot on Ocean Drive
 
 test('the site and its config are served with safe headers', async () => {
   const c = new Client(app.base);
@@ -88,13 +88,13 @@ test('buying a lot: priced by the server, shown to everyone, and never sold twic
   const rival = new Client(app.base);
   await rival.register('Rival Inc');
   assert.equal((await rival.post('/api/properties', { ...SHOP, ...LOT, name: 'Rival' })).status, 409);
-  assert.equal((await rival.post('/api/properties', { ...SHOP, w: 2, h: 2, x: 13, y: 44, name: 'Rival' })).status, 409);
+  assert.equal((await rival.post('/api/properties', { ...SHOP, w: 2, h: 2, x: 19, y: 99, name: 'Rival' })).status, 409);
   assert.equal((await rival.post('/api/quote', { ...SHOP, ...LOT })).status, 409);
   // unbuildable ground, bad design, bad link, no name
   assert.equal((await rival.post('/api/properties', { ...SHOP, x: 2, y: 2, name: 'At sea' })).status, 409);
-  assert.equal((await rival.post('/api/properties', { ...SHOP, floors: 99, x: 16, y: 44, name: 'Too tall' })).status, 400);
-  assert.equal((await rival.post('/api/properties', { ...SHOP, x: 16, y: 44, name: 'Bad link', url: 'javascript:alert(1)' })).status, 400);
-  assert.equal((await rival.post('/api/properties', { ...SHOP, x: 16, y: 44, name: '' })).status, 400);
+  assert.equal((await rival.post('/api/properties', { ...SHOP, floors: 99, x: 24, y: 99, name: 'Too tall' })).status, 400);
+  assert.equal((await rival.post('/api/properties', { ...SHOP, x: 24, y: 99, name: 'Bad link', url: 'javascript:alert(1)' })).status, 400);
+  assert.equal((await rival.post('/api/properties', { ...SHOP, x: 24, y: 99, name: '' })).status, 400);
   assert.equal((await visitor.get('/api/state')).json.properties.length, 1);
 });
 
@@ -103,7 +103,7 @@ test('only the owner can edit or demolish; an admin can remove anything', async 
   const other = new Client(app.base);
   await owner.register('Tide Surf');
   await other.register('Someone Else');
-  const p = (await owner.post('/api/properties', { ...SHOP, x: 18, y: 44, name: 'Tide Surf', url: 'https://tide.example.com' })).json.property;
+  const p = (await owner.post('/api/properties', { ...SHOP, x: 30, y: 99, name: 'Tide Surf', url: 'https://tide.example.com' })).json.property;
 
   assert.equal((await other.request('PATCH', `/api/properties/${p.id}`, { name: 'Hacked' })).status, 403);
   assert.equal((await other.request('DELETE', `/api/properties/${p.id}`, {})).status, 403);
@@ -119,7 +119,7 @@ test('only the owner can edit or demolish; an admin can remove anything', async 
   assert.equal((await owner.request('DELETE', `/api/properties/${p.id}`, {})).status, 200);
   assert.equal((await owner.get(`/api/properties/${p.id}`)).status, 404);
   // the lot is for sale again
-  const again = await other.post('/api/properties', { ...SHOP, x: 18, y: 44, name: 'Second Owner' });
+  const again = await other.post('/api/properties', { ...SHOP, x: 30, y: 99, name: 'Second Owner' });
   assert.equal(again.status, 201);
 
   assert.equal((await other.request('DELETE', `/api/admin/properties/${again.json.property.id}`, {})).status, 403);
@@ -131,8 +131,8 @@ test('only the owner can edit or demolish; an admin can remove anything', async 
 test('traffic counts each visitor once per property, and feeds the leaderboard', async () => {
   const owner = new Client(app.base);
   await owner.register('Busy Shop');
-  const quiet = (await owner.post('/api/properties', { ...SHOP, x: 22, y: 44, name: 'Quiet Shop' })).json.property;
-  const busy = (await owner.post('/api/properties', { ...SHOP, x: 24, y: 44, name: 'Busy Shop' })).json.property;
+  const quiet = (await owner.post('/api/properties', { ...SHOP, x: 34, y: 99, name: 'Quiet Shop' })).json.property;
+  const busy = (await owner.post('/api/properties', { ...SHOP, x: 36, y: 99, name: 'Busy Shop' })).json.property;
 
   const noCookie = new Client(app.base);
   assert.equal((await noCookie.post(`/api/properties/${busy.id}/view`)).json.counted, false, 'no visitor cookie, no count');
@@ -229,4 +229,79 @@ test('sign-in attempts are rate limited', async () => {
   } finally {
     await limited.close();
   }
+});
+
+test('logos: a small PNG is stored with the property, served as an image and can be replaced or removed', async () => {
+  const { encodePng } = await import('../server/png.js');
+  const png = (side, fill = 200) => `data:image/png;base64,${encodePng(side, side, new Uint8Array(side * side * 4).fill(fill)).toString('base64')}`;
+  const owner = new Client(app.base);
+  await owner.register('Logo Owner');
+
+  // things that are not acceptable logos
+  const bad = [
+    'data:image/svg+xml;base64,PHN2Zy8+',          // not a PNG
+    'data:image/png;base64,aGVsbG8gd29ybGQ=',     // says PNG, is not
+    'https://example.com/logo.png',               // a link, not a picture
+    png(4),                                       // too small
+    png(300),                                     // too large on a side
+    12345,
+  ];
+  for (const logo of bad) {
+    const r = await owner.post('/api/properties', { ...SHOP, x: 50, y: 99, name: 'Bad Logo', logo });
+    assert.equal(r.status, 400, String(logo).slice(0, 40));
+  }
+  assert.equal((await owner.get('/api/state')).json.properties.some((p) => p.name === 'Bad Logo'), false);
+
+  const logo = png(64);
+  const p = (await owner.post('/api/properties', { ...SHOP, x: 50, y: 99, name: 'With Logo', logo })).json.property;
+  assert.equal(p.logo, `/api/properties/${p.id}/logo?v=1`);
+  const got = await fetch(app.base + p.logo);
+  assert.equal(got.status, 200);
+  assert.equal(got.headers.get('content-type'), 'image/png');
+  assert.equal(got.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(got.headers.get('content-security-policy'), /default-src 'none'/);
+  assert.equal(Buffer.from(await got.arrayBuffer()).toString('base64'), logo.split(',')[1]);
+
+  // the island listing carries the link, never the picture itself
+  const listed = (await owner.get('/api/state')).json.properties.find((q) => q.id === p.id);
+  assert.equal(listed.logo, p.logo);
+  assert.ok(JSON.stringify(listed).length < 1000);
+
+  // editing the text keeps the logo; sending a new one replaces it; null removes it
+  const kept = (await owner.request('PATCH', `/api/properties/${p.id}`, { name: 'With Logo', message: 'Hello' })).json.property;
+  assert.equal(kept.logo, p.logo);
+  const swapped = (await owner.request('PATCH', `/api/properties/${p.id}`, { name: 'With Logo', logo: png(32, 90) })).json.property;
+  assert.equal(swapped.logo, `/api/properties/${p.id}/logo?v=2`);
+  const rejected = await owner.request('PATCH', `/api/properties/${p.id}`, { name: 'Renamed Anyway', logo: 'nonsense' });
+  assert.equal(rejected.status, 400);
+  assert.equal((await owner.get(`/api/properties/${p.id}`)).json.property.name, 'With Logo', 'a bad logo changes nothing');
+  const removed = (await owner.request('PATCH', `/api/properties/${p.id}`, { name: 'With Logo', logo: null })).json.property;
+  assert.equal(removed.logo, null);
+  assert.equal((await fetch(`${app.base}/api/properties/${p.id}/logo`)).status, 404);
+
+  // someone else cannot change it
+  const other = new Client(app.base);
+  await other.register('Not The Owner');
+  assert.equal((await other.request('PATCH', `/api/properties/${p.id}`, { name: 'With Logo', logo })).status, 403);
+});
+
+test('the charities list shows who the money is for, where to give and every gift so far', async () => {
+  const c = new Client(app.base);
+  const before = (await c.get('/api/charities')).json;
+  await c.post('/api/donations', { civicId: 'east-school', amountCents: 1700, donorName: 'Ledger Check' });
+  const d = (await c.get('/api/charities')).json;
+  assert.deepEqual(d.charities.map((x) => x.id), ['health', 'education', 'scholarship', 'hunger', 'parks']);
+  assert.equal(d.totalCents, before.totalCents + 1700);
+  assert.equal(d.gifts, before.gifts + 1);
+  assert.deepEqual([d.recent[0].name, d.recent[0].cents, d.recent[0].charity], ['Ledger Check', 1700, 'education']);
+  assert.equal(d.payments, 'demo');
+
+  const edu = d.charities.find((x) => x.id === 'education');
+  assert.deepEqual(edu.places.map((p) => p.id), ['school', 'east-school', 'hill-school']);
+  assert.equal(edu.totalCents, before.charities.find((x) => x.id === 'education').totalCents + 1700);
+  // the stand-in names that ship with the site are flagged as such
+  assert.ok(d.charities.every((x) => x.placeholder === true && x.registration === '' && x.url === ''));
+  // every civic building belongs to a listed charity
+  const places = d.charities.flatMap((x) => x.places);
+  assert.equal(places.length, 18);
 });

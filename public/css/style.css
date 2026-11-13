@@ -267,6 +267,17 @@ p { margin: 0 0 8px; }
 .card-head { display: flex; gap: 10px; align-items: flex-start; }
 .card-head canvas { width: 112px; height: 96px; flex-shrink: 0; image-rendering: pixelated; background: #4a9a3e; }
 .card-head h2 { overflow-wrap: anywhere; }
+.logo {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  display: block;
+  object-fit: contain;
+  background: var(--paper);
+  border: 2px solid;
+  border-color: var(--shadow) var(--light) var(--light) var(--shadow);
+  margin-bottom: 4px;
+}
 .blurb { padding: 8px 10px; font-size: 21px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
 .stats div { display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px dotted var(--shadow); }
@@ -279,9 +290,15 @@ p { margin: 0 0 8px; }
 .tag.zone-hillside { background: #5a8f3a; }
 .tag.zone-summit { background: #7a55b0; }
 .tag.zone-town { background: #8a6a3a; }
+.tag.zone-downtown { background: #b0562c; }
+.tag.zone-ridge { background: #3f7a6a; }
 .raised { padding: 8px; text-align: center; }
 .raised p { margin: 2px 0 0; }
 .big-number { font-size: 38px; line-height: 1; color: #1f7a45; }
+.charity { border-top: 2px solid var(--shadow); box-shadow: 0 -1px 0 var(--light); padding-top: 10px; }
+.raised-inline { color: #1f7a45; font-size: 22px; white-space: nowrap; }
+a { color: var(--title-a); }
+#account-btn { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
 .amounts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 
 /* ---- lists and tables -------------------------------------------------------------------- */
@@ -367,4 +384,6 @@ td.num, th.num { text-align: right; }
   #status-stats { display: none; }
   [data-act='about'], [data-act='explore'], [data-act='zoom-in'], [data-act='zoom-out'], .hide-xs { display: none; }
   .show-xs { display: inline; }
+  #account-btn { max-width: 86px; }
+  .field-inline select { max-width: 74px; }
 }

@@ -3,9 +3,10 @@
 
 import { BUILDINGS, TIERS, COLOURS, CHARITIES, LAND, DONATION, LIMITS, formatMoney, quote, validateSpec } from '/shared/catalog.js';
 import { api } from './api.js';
-import { h, $, openSide, closeSide, openModal, closeModal, toast, drawSprite, trimmed } from './dom.js';
+import { h, $, fill, openSide, closeSide, openModal, closeModal, toast, drawSprite, trimmed } from './dom.js';
 import { buildingSprite } from './buildings.js';
 import { civicSprite } from './civic.js';
+import { logoImage, spriteWithLogo, fileToLogo } from './logos.js';
 
 const ICON_SPECS = {
   home: { type: 'home', style: 'cottage', tier: 'premium', colour: 'coral', floors: 2, w: 1, h: 1 },
@@ -37,6 +38,46 @@ function field(label, input, max) {
   return h('label', {}, h('span', { class: 'label' }, label, count), input);
 }
 
+// A building's picture, with its logo mounted once the logo has loaded.
+function lookOf(spec, logoUrl, onReady) {
+  const base = buildingSprite(spec);
+  if (!logoUrl) return base;
+  const logo = logoImage(logoUrl, onReady);
+  return logo.ready ? spriteWithLogo(base, logo.el) : base;
+}
+
+// "Add a logo" control. onChange gets a PNG data URL, or null when removed.
+function logoPicker(current, onChange) {
+  const img = h('img', { class: 'logo', alt: 'Logo preview', hidden: !current });
+  if (current) img.src = current;
+  const file = h('input', { type: 'file', accept: 'image/*', hidden: true });
+  const err = h('p', { class: 'error small' });
+  const pick = h('button', { class: 'btn small', type: 'button', text: current ? 'Change logo' : 'Add a logo', onclick: () => file.click() });
+  const remove = h('button', { class: 'btn small', type: 'button', text: 'Remove', hidden: !current });
+  remove.onclick = () => {
+    img.hidden = true;
+    remove.hidden = true;
+    pick.textContent = 'Add a logo';
+    file.value = '';
+    onChange(null);
+  };
+  file.addEventListener('change', async () => {
+    err.textContent = '';
+    if (!file.files[0]) return;
+    try {
+      const url = await fileToLogo(file.files[0]);
+      img.src = url;
+      img.hidden = false;
+      remove.hidden = false;
+      pick.textContent = 'Change logo';
+      onChange(url);
+    } catch (e) {
+      err.textContent = e.message;
+    }
+  });
+  return h('div', {}, h('span', { class: 'label', text: 'Logo (optional)' }), h('div', { class: 'row' }, img, pick, remove, file), err, h('p', { class: 'muted small', text: 'Shown in your ad and flown on a flag or billboard on the building.' }));
+}
+
 export function createUI(app) {
   const ui = {};
 
@@ -50,7 +91,7 @@ export function createUI(app) {
   const build = {
     type: 'shop', style: 'corner', tier: 'standard', colour: 'coral', floors: 1, w: 1, h: 1,
     x: null, y: null, lot: null,
-    name: '', url: '', message: '',
+    name: '', url: '', message: '', logo: null,
   };
   app.build = build;
   const panel = $('#build');
@@ -58,12 +99,20 @@ export function createUI(app) {
 
   const spec = () => ({ type: build.type, style: build.style, tier: build.tier, colour: build.colour, floors: build.floors, w: build.w, h: build.h });
 
+  // smallest lot the chosen type and style allow
+  const minLot = () => BUILDINGS[build.type].styles[build.style]?.minLot || BUILDINGS[build.type].minLot;
+  function fitLot() {
+    const t = BUILDINGS[build.type];
+    const lo = minLot();
+    build.w = Math.min(t.maxLot[0], Math.max(lo[0], build.w));
+    build.h = Math.min(t.maxLot[1], Math.max(lo[1], build.h));
+  }
+
   function setType(type) {
     const t = BUILDINGS[type];
     build.type = type;
     if (!t.styles[build.style]) build.style = Object.keys(t.styles)[0];
-    build.w = Math.min(t.maxLot[0], Math.max(t.minLot[0], build.w));
-    build.h = Math.min(t.maxLot[1], Math.max(t.minLot[1], build.h));
+    fitLot();
     build.floors = Math.min(t.floors[1], Math.max(t.floors[0], build.floors));
     rebuildStyles();
     revalidate();
@@ -84,9 +133,9 @@ export function createUI(app) {
 
   function rebuildStyles() {
     const t = BUILDINGS[build.type];
-    refs.styles.replaceChildren(
+    fill(refs.styles, 
       ...Object.entries(t.styles).map(([id, s]) =>
-        h('button', { class: 'btn', type: 'button', data: { id }, text: s.name, onclick: () => { build.style = id; sync(); } }),
+        h('button', { class: 'btn', type: 'button', data: { id }, text: s.name, title: s.minLot ? `Needs a lot of at least ${s.minLot.join('x')}` : '', onclick: () => { build.style = id; fitLot(); revalidate(); } }),
       ),
     );
   }
@@ -106,9 +155,8 @@ export function createUI(app) {
       const out = h('output', { text: '1' });
       refs[`out_${key}`] = out;
       const step = (d) => () => {
-        const t = BUILDINGS[build.type];
-        const i = key === 'w' ? 0 : 1;
-        build[key] = Math.min(t.maxLot[i], Math.max(t.minLot[i], build[key] + d));
+        build[key] += d;
+        fitLot();
         revalidate();
       };
       return h('span', { class: 'stepper' }, h('span', { class: 'label', text: label }), h('button', { class: 'btn sq', type: 'button', onclick: step(-1), 'aria-label': `${label} smaller` }, '-'), out, h('button', { class: 'btn sq', type: 'button', onclick: step(1), 'aria-label': `${label} bigger` }, '+'));
@@ -137,6 +185,7 @@ export function createUI(app) {
     refs.name = h('input', { type: 'text', maxLength: LIMITS.name, placeholder: 'Your brand or business', oninput: (e) => { build.name = e.target.value; syncPrice(); } });
     refs.url = h('input', { type: 'url', maxLength: LIMITS.url, placeholder: 'https://your-site.com', oninput: (e) => { build.url = e.target.value; } });
     refs.message = h('textarea', { maxLength: LIMITS.message, rows: 3, placeholder: 'What should visitors know?', oninput: (e) => { build.message = e.target.value; } });
+    refs.logo = h('div', {}, logoPicker(null, (url) => { build.logo = url; sync(); }));
     refs.price = h('div', { class: 'inset price' });
     refs.buy = h('button', { class: 'btn gold big', type: 'button', onclick: () => startCheckout() });
     refs.hint = h('p', { class: 'muted small center' });
@@ -153,12 +202,12 @@ export function createUI(app) {
       h('h3', { text: '3. Design it' }),
       h('div', { class: 'stack' }, refs.preview, h('div', {}, h('span', { class: 'label', text: 'Style' }), refs.styles), h('div', {}, refs.floorsLabel, refs.floors), h('div', {}, h('span', { class: 'label', text: 'Finish' }), refs.tiers), h('div', {}, h('span', { class: 'label', text: 'Colours' }), refs.colours)),
       h('h3', { text: '4. Write your ad' }),
-      h('div', { class: 'stack' }, field('Name on the building', refs.name, LIMITS.name), field('Website', refs.url), field('Message visitors see', refs.message, LIMITS.message)),
+      h('div', { class: 'stack' }, field('Name on the building', refs.name, LIMITS.name), field('Website', refs.url), field('Message visitors see', refs.message, LIMITS.message), refs.logo),
       h('h3', { text: 'Price' }),
       h('div', { class: 'stack' }, refs.price, refs.buy, refs.hint),
     );
     const close = h('button', { class: 'btn', type: 'button', title: 'Close', 'aria-label': 'Close', onclick: () => app.setMode('explore') }, 'X');
-    panel.replaceChildren(h('div', { class: 'titlebar' }, h('span', { text: 'Build on the island' }), close), body);
+    fill(panel, h('div', { class: 'titlebar' }, h('span', { text: 'Build on the island' }), close), body);
     rebuildStyles();
   }
 
@@ -167,7 +216,7 @@ export function createUI(app) {
     const zones = build.lot ? build.lot.zones : { town: build.w * build.h };
     const q = quote(spec(), zones);
     const line = (label, value, cls) => h('div', { class: cls }, h('span', { text: label }), h('span', { text: value }));
-    refs.price.replaceChildren(
+    fill(refs.price, 
       line(build.lot ? `Land (${LAND.zones[build.lot.zone].name})` : 'Land', build.lot ? formatMoney(q.land) : 'pick a lot'),
       line(`${t.name} (${TIERS[build.tier].name})`, formatMoney(q.build)),
       line('Total', build.lot ? formatMoney(q.total) : `from ${formatMoney(q.total)}`, 'total'),
@@ -175,7 +224,7 @@ export function createUI(app) {
     const ready = !!build.lot && build.name.trim().length >= 2;
     refs.buy.textContent = build.lot ? `Buy and build - ${formatMoney(q.total)}` : 'Pick a lot on the map';
     refs.buy.disabled = !ready;
-    refs.hint.textContent = !build.lot ? '' : build.name.trim().length < 2 ? 'Add a name for your building to continue.' : app.config.payments === 'demo' ? 'Demo mode: no real payment is taken.' : 'You will pay securely with Stripe.';
+    refs.hint.textContent = !build.lot ? '' : build.name.trim().length < 2 ? 'Add a name for your building to continue.' : app.config.payments === 'demo' ? 'Demo mode: no real payment is taken.' : `You will pay securely with ${app.config.paymentLabel || 'our payment partner'}.`;
   }
 
   function sync() {
@@ -196,15 +245,18 @@ export function createUI(app) {
     refs.floors.max = t.floors[1];
     refs.floors.value = build.floors;
     refs.floorsLabel.textContent = build.type === 'farm' ? `Barn size: ${['Small', 'Medium', 'Large'][build.floors - 1]}` : `${t.floorLabel}: ${build.floors}`;
-    drawSprite(refs.preview, trimmed(buildingSprite(spec())), 3);
+    drawSprite(refs.preview, trimmed(ui.buildLook()), 3);
     if (build.lot) {
-      refs.lotInfo.replaceChildren(zoneTag(build.lot.zone), ` ${build.lot.address} `, h('span', { class: 'muted', text: `(${build.w}x${build.h})` }));
+      fill(refs.lotInfo, zoneTag(build.lot.zone), ` ${build.lot.address} `, h('span', { class: 'muted', text: `(${build.w}x${build.h})` }));
     } else {
-      refs.lotInfo.replaceChildren(h('span', { class: 'muted', text: `No lot chosen yet. This ${t.name.toLowerCase()} fits ${t.minLot.join('x')} to ${t.maxLot.join('x')} tiles.` }));
+      fill(refs.lotInfo, h('span', { class: 'muted', text: `No lot chosen yet. This ${t.name.toLowerCase()} fits ${t.minLot.join('x')} to ${t.maxLot.join('x')} tiles.` }));
     }
     syncPrice();
     app.syncGhost();
   }
+
+  // the design as it will look, logo included (also used for the map ghost)
+  ui.buildLook = () => lookOf(spec(), build.logo, () => { if (!panel.hidden) sync(); });
 
   ui.showBuild = (on) => {
     if (on && !panel.firstChild) buildPanel();
@@ -245,16 +297,17 @@ export function createUI(app) {
       confirm.disabled = true;
       err.textContent = '';
       try {
-        const out = await api.post('/api/properties', { ...spec(), x: build.x, y: build.y, name: build.name, url: build.url, message: build.message });
+        const out = await api.post('/api/properties', { ...spec(), x: build.x, y: build.y, name: build.name, url: build.url, message: build.message, logo: build.logo });
         if (out.status === 'redirect') {
           location.href = out.url;
           return;
         }
         closeModal();
-        Object.assign(build, { x: null, y: null, lot: null, name: '', url: '', message: '' });
+        Object.assign(build, { x: null, y: null, lot: null, name: '', url: '', message: '', logo: null });
         refs.name.value = '';
         refs.url.value = '';
         refs.message.value = '';
+        fill(refs.logo, logoPicker(null, (url) => { build.logo = url; sync(); }));
         app.setMode('explore');
         await app.refresh();
         toast(`${out.property.name} is now on the island!`, 'good');
@@ -274,14 +327,14 @@ export function createUI(app) {
         h('div', { class: 'inset price' }, h('div', {}, h('span', { text: 'Land' }), h('span', { text: formatMoney(q.land) })), h('div', {}, h('span', { text: 'Building' }), h('span', { text: formatMoney(q.build) })), h('div', { class: 'total' }, h('span', { text: 'Total' }), h('span', { text: formatMoney(q.total) }))),
         app.config.payments === 'demo'
           ? h('p', { class: 'note', text: 'Demo mode: this site is not taking real payments yet, so confirming builds straight away at no charge.' })
-          : h('p', { class: 'small muted', text: 'You will be taken to Stripe to pay. Your lot is held for 30 minutes while you check out.' }),
+          : h('p', { class: 'small muted', text: `You will be taken to ${app.config.paymentLabel || 'our payment partner'} to pay. Your lot is held for 30 minutes while you check out.` }),
         previewNote(),
         err,
         confirm,
       ),
       { narrow: true },
     );
-    drawSprite(preview, trimmed(buildingSprite(spec())), 2);
+    drawSprite(preview, trimmed(ui.buildLook()), 2);
   }
 
   // ===========================================================================
@@ -310,14 +363,14 @@ export function createUI(app) {
       const link = /^https?:\/\//i.test(p.url)
         ? h('a', { class: 'btn gold big center', href: p.url, target: '_blank', rel: 'noopener noreferrer nofollow sponsored', onclick: () => { api.ping(`/api/properties/${id}/click`); clicks.textContent = (p.clicks + 1).toLocaleString('en-US'); } }, `Visit ${hostOf(p.url)}`)
         : null;
-      body.replaceChildren(
-        h('div', { class: 'card-head' }, pic, h('div', {}, h('h2', { text: p.name }), h('p', { class: 'muted', text: `by ${p.owner}` }), h('p', {}, zoneTag(p.zone)))),
+      fill(body, 
+        h('div', { class: 'card-head' }, pic, h('div', {}, p.logo ? h('img', { class: 'logo', src: p.logo, alt: `${p.name} logo` }) : null, h('h2', { text: p.name }), h('p', { class: 'muted', text: `by ${p.owner}` }), h('p', {}, zoneTag(p.zone)))),
         p.message ? h('div', { class: 'inset blurb', text: p.message }) : null,
         link,
         h(
           'div',
           { class: 'stats' },
-          h('div', {}, h('span', { text: 'Property value' }), h('span', { text: formatMoney(p.valueCents) })),
+          h('div', {}, h('span', { text: 'Value' }), h('span', { text: formatMoney(p.valueCents) })),
           h('div', {}, h('span', { text: 'Visitors' }), views),
           h('div', {}, h('span', { text: 'Land' }), h('span', { text: formatMoney(p.landCents) })),
           h('div', {}, h('span', { text: 'Link clicks' }), clicks),
@@ -332,7 +385,8 @@ export function createUI(app) {
           mine ? h('button', { class: 'btn small danger', type: 'button', text: 'Demolish', onclick: demolish }) : null,
         ),
       );
-      drawSprite(pic, trimmed(buildingSprite(p)), 2);
+      const paint = () => pic.isConnected && drawSprite(pic, trimmed(lookOf(p, p.logo, paint)), 2);
+      paint();
     };
 
     const edit = () => {
@@ -340,11 +394,13 @@ export function createUI(app) {
       const url = h('input', { type: 'url', maxLength: LIMITS.url, value: p.url });
       const message = h('textarea', { maxLength: LIMITS.message, rows: 4, value: p.message });
       const err = h('p', { class: 'error' });
+      let logo; // stays undefined (keep the current logo) unless the owner changes it
+      const picker = logoPicker(p.logo, (v) => { logo = v; });
       const save = h('button', { class: 'btn gold', type: 'button', text: 'Save' });
       save.onclick = async () => {
         save.disabled = true;
         try {
-          const out = await api.patch(`/api/properties/${id}`, { name: name.value, url: url.value, message: message.value });
+          const out = await api.patch(`/api/properties/${id}`, { name: name.value, url: url.value, message: message.value, logo });
           Object.assign(p, out.property);
           toast('Your ad has been updated.', 'good');
           view();
@@ -354,7 +410,7 @@ export function createUI(app) {
           save.disabled = false;
         }
       };
-      body.replaceChildren(h('h3', { text: 'Edit my ad' }), field('Name on the building', name, LIMITS.name), field('Website', url), field('Message visitors see', message, LIMITS.message), err, h('div', { class: 'row' }, save, h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: view })));
+      fill(body, h('h3', { text: 'Edit my ad' }), field('Name on the building', name, LIMITS.name), field('Website', url), field('Message visitors see', message, LIMITS.message), picker, err, h('div', { class: 'row' }, save, h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: view })));
     };
 
     const demolish = () => {
@@ -431,7 +487,7 @@ export function createUI(app) {
         const d = await api.get(`/api/civics/${civic.id}`);
         raised.textContent = formatMoney(d.totalCents);
         raisedSub.textContent = d.count ? `raised from ${d.count.toLocaleString('en-US')} gift${d.count === 1 ? '' : 's'}` : 'Be the first to give.';
-        donors.replaceChildren(
+        fill(donors, 
           ...(d.top.length
             ? d.top.map((t, i) => h('li', {}, h('span', { class: 'rank', text: `#${i + 1}` }), h('span', { class: 'who', text: t.name }), h('span', { class: 'amt', text: formatMoney(t.cents) })))
             : [h('li', { class: 'muted', text: 'No donations yet.' })]),
@@ -470,7 +526,7 @@ export function createUI(app) {
       h(
         'div',
         { class: 'stack' },
-        h('div', { class: 'card-head' }, pic, h('div', {}, h('h2', { text: charity.name }), h('p', { class: 'muted', text: charity.blurb }))),
+        h('div', { class: 'card-head' }, pic, h('div', {}, h('h2', { text: charity.name }), h('p', { class: 'muted', text: charity.blurb }), h('button', { class: 'btn small', type: 'button', text: 'About this charity', onclick: () => ui.openCharities(civic.charity) }))),
         h('div', { class: 'inset raised' }, raised, raisedSub),
         h('h3', { text: 'Make a donation' }),
         presets,
@@ -496,6 +552,55 @@ export function createUI(app) {
   // Leaderboards
   // ===========================================================================
 
+  // ===========================================================================
+  // Charities
+  // ===========================================================================
+
+  ui.openCharities = async (focusId) => {
+    const content = h('div', { class: 'stack' }, h('p', { class: 'muted', text: 'Loading...' }));
+    openModal('Charities', content);
+    let d;
+    try {
+      d = await api.get('/api/charities');
+    } catch (e) {
+      fill(content, h('p', { class: 'error', text: e.message }));
+      return;
+    }
+    const goto = (placeId) => () => {
+      const civic = app.world.civics.find((c) => c.id === placeId);
+      closeModal();
+      if (app.mode !== 'explore') app.setMode('explore');
+      if (civic) ui.openCivic(civic, true);
+    };
+    const link = (label, url) => h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: label });
+    const day = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const names = Object.fromEntries(d.charities.map((c) => [c.id, c.name]));
+    const card = (c) =>
+      h(
+        'section',
+        { class: 'charity stack', id: `charity-${c.id}` },
+        h('div', { class: 'row spread' }, h('h2', { text: c.name }), h('span', { class: 'raised-inline', text: `${formatMoney(c.totalCents)} raised` })),
+        c.placeholder ? h('p', { class: 'note', text: 'Partner to be announced. This name is a stand-in until the island confirms the organisation it will support.' }) : null,
+        h('p', { text: c.about || c.blurb }),
+        !c.placeholder && (c.registration || c.url)
+          ? h('p', { class: 'small' }, c.registration ? `Registration: ${c.registration}` : null, c.verifyUrl ? [' (', link('check it on the official register', c.verifyUrl), ')'] : null, c.registration && c.url ? ' - ' : null, c.url ? link(hostOf(c.url), c.url) : null)
+          : null,
+        h('p', { class: 'muted small', text: c.gifts ? `${c.gifts.toLocaleString('en-US')} gift${c.gifts === 1 ? '' : 's'} so far${c.topDonor ? `; the biggest giver is ${c.topDonor.name} (${formatMoney(c.topDonor.cents)})` : ''}.` : 'No gifts yet.' }),
+        h('div', { class: 'row' }, h('span', { class: 'label', text: 'Give at' }), c.places.map((pl) => h('button', { class: 'btn small', type: 'button', text: pl.name, title: 'Go there', onclick: goto(pl.id) }))),
+      );
+    fill(content, 
+      h('p', { text: 'Every building with a heart over it raises money for one of these causes. Pick a place to go there and give.' }),
+      d.payments === 'demo' ? h('p', { class: 'note', text: 'This site is in demo mode: gifts are recorded so you can try it out, but no money is collected.' }) : null,
+      d.statement ? h('div', {}, h('h3', { text: 'How gifts are handled' }), h('p', { text: d.statement })) : null,
+      d.charities.map(card),
+      h('h3', { text: `Every gift is on the record: ${d.gifts.toLocaleString('en-US')} so far, ${formatMoney(d.totalCents)} in all` }),
+      d.recent.length
+        ? h('ul', { class: 'list' }, d.recent.map((g) => h('li', {}, h('span', { class: 'who' }, g.name, ' ', h('span', { class: 'sub', text: `to ${names[g.charity] || g.charity} - ${day(g.at)}` })), h('span', { class: 'amt', text: formatMoney(g.cents) }))))
+        : h('p', { class: 'muted', text: 'No gifts yet.' }),
+    );
+    if (focusId) document.getElementById(`charity-${focusId}`)?.scrollIntoView({ block: 'start' });
+  };
+
   ui.openLeaders = async (startTab = 'donors') => {
     const content = h('div', {});
     const tabs = h('div', { class: 'tabs' });
@@ -505,7 +610,7 @@ export function createUI(app) {
     try {
       data = await api.get('/api/leaderboards');
     } catch (e) {
-      content.replaceChildren(h('p', { class: 'error', text: e.message }));
+      fill(content, h('p', { class: 'error', text: e.message }));
       return;
     }
     const goto = (r) => () => {
@@ -526,7 +631,7 @@ export function createUI(app) {
     };
     const show = (id) => {
       for (const b of tabs.children) b.classList.toggle('active', b.dataset.id === id);
-      content.replaceChildren(views[id][1]());
+      fill(content, views[id][1]());
     };
     tabs.append(...Object.entries(views).map(([id, [label]]) => h('button', { class: 'btn', type: 'button', data: { id }, text: label, onclick: () => show(id) })));
     show(startTab);

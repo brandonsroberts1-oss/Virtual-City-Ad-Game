@@ -74,6 +74,10 @@ export function openDb(file = ':memory:') {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 4000;');
   db.exec(SCHEMA);
+  // columns added after the first release
+  const cols = new Set(db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name));
+  if (!cols.has('logo')) db.exec('ALTER TABLE properties ADD COLUMN logo BLOB');
+  if (!cols.has('logo_v')) db.exec('ALTER TABLE properties ADD COLUMN logo_v INTEGER NOT NULL DEFAULT 0');
   return db;
 }
 

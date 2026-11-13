@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
-import { createPayments } from './payments.js';
+import { createPayments } from './payments/index.js';
 import { createApp } from './app.js';
 import { addSamples, clearSamples } from './samples.js';
 
@@ -30,11 +30,14 @@ const app = createApp({ db, payments, env });
 const port = Number(process.env.PORT) || 3000;
 const server = app.listen(port, () => {
   console.log(`Brand Island is running on port ${port}${env.PUBLIC_URL ? ` (${env.PUBLIC_URL})` : ` - http://localhost:${port}`}`);
-  console.log(`Payments: ${payments.mode === 'demo' ? 'DEMO MODE (no real charges)' : 'Stripe Checkout'}`);
-  if (payments.mode === 'stripe' && !env.PUBLIC_URL) {
-    console.warn('Warning: set PUBLIC_URL (e.g. https://your-site.com) so Stripe can send buyers back after paying.');
+  console.log(`Payments: ${payments.mode === 'demo' ? 'DEMO MODE (no real charges)' : payments.label}`);
+  if (payments.mode !== 'demo' && !env.PUBLIC_URL) {
+    console.warn(`Warning: set PUBLIC_URL (e.g. https://your-site.com) so ${payments.label} can send buyers back after paying.`);
   }
 });
+
+// settle checkouts whose buyers did not come back to the site
+if (payments.check) setInterval(() => app.locals.sweep().catch((err) => console.error(err)), 60 * 1000).unref();
 
 // Hosts stop a site by sending SIGTERM; finish up and close the database.
 for (const signal of ['SIGTERM', 'SIGINT']) {

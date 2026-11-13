@@ -1,7 +1,7 @@
 // The island renderer: camera, layered drawing and mouse picking.
 //
 // Draw order each frame:
-//   sea -> terrain image -> shallows + surf -> boats ->
+//   sea -> ground image (with still shallows) -> surf -> boats ->
 //   depth-sorted pass (trees, buildings, cars, people, overlays) ->
 //   cloud shadows -> markers -> screen-space weather.
 
@@ -13,6 +13,7 @@ import { PixelBuf, hex, pack, spriteFromArt } from './pixel.js';
 import { decorSprite, makeSaleSign, sprite } from './sprites.js';
 import { buildingSprite } from './buildings.js';
 import { civicSprite } from './civic.js';
+import { logoImage, spriteWithLogo } from './logos.js';
 
 const ROWS = 2 * N;
 
@@ -46,9 +47,12 @@ export class Renderer {
     this.world = world;
     this.actors = actors;
     this.weather = weather;
-    this.terrain = renderTerrain(world);
-    this.surf = new Surf(this.terrain.shoreMap);
-    this.terrain.shoreMap = null;
+    const terrain = renderTerrain(world);
+    this.ground = terrain.baseCanvas;
+    this.surf = new Surf(terrain.shoreMap);
+    // cliff tiles that are redrawn over whatever stands behind them
+    this.occluders = Array.from({ length: ROWS }, () => []);
+    for (const o of terrain.occluders) if (o.row >= 0 && o.row < ROWS) this.occluders[o.row].push(o);
     this.seaFrames = makeSeaFrames();
     this.cam = { x: sx(N / 2, N / 2), y: sy(N / 2, N / 2) - 34, zoom: 1 };
     this.camTarget = null;
@@ -88,6 +92,7 @@ export class Renderer {
 
   setProperties(props) {
     const world = this.world;
+    this.props = props;
     this.structures = [];
     this.occupied = new Set();
     for (const row of this.static) row.length = 0;
@@ -117,7 +122,13 @@ export class Renderer {
     for (const c of world.civics) add('civic', c, civicSprite(c), c.x, c.y, c.w, c.h, c.level);
     for (const p of props) {
       const level = world.level[world.ti(p.x, p.y)];
-      add('property', p, buildingSprite(p), p.x, p.y, p.w, p.h, level);
+      let look = buildingSprite(p);
+      if (p.logo) {
+        // the logo arrives a moment later; redraw the island once it is in
+        const logo = logoImage(p.logo, () => this.rebuildSoon());
+        if (logo.ready) look = spriteWithLogo(look, logo.el);
+      }
+      add('property', p, look, p.x, p.y, p.w, p.h, level);
       for (let yy = p.y; yy < p.y + p.h; yy++) for (let xx = p.x; xx < p.x + p.w; xx++) this.occupied.add(world.ti(xx, yy));
     }
     this.structures.sort((a, b) => b.front - a.front);
@@ -140,6 +151,17 @@ export class Renderer {
     for (const row of this.static) row.sort((a, b) => a.key - b.key);
   }
 
+  // Rebuild the scene shortly (many logos finishing at once cause one rebuild).
+  rebuildSoon() {
+    if (this.rebuildTimer) return;
+    this.rebuildTimer = setTimeout(() => {
+      this.rebuildTimer = null;
+      const hover = this.hoverStruct;
+      this.setProperties(this.props || []);
+      if (hover) this.hoverStruct = this.structures.find((st) => st.kind === hover.kind && st.ref === hover.ref) || null;
+    }, 150);
+  }
+
   // ---- camera ------------------------------------------------------------------
 
   resize() {
@@ -152,8 +174,8 @@ export class Renderer {
     this.cssH = cssH;
     // Zoom steps are whole numbers of device pixels per art pixel, so the
     // pixel art stays crisp on high-density screens too.
-    this.levels = [1, 2, 3, 4, 6, 8, 12].filter((n) => n <= 4 * this.dpr).map((n) => n / this.dpr);
-    if (this.dpr === 1) this.levels.unshift(0.5);
+    // (the two smallest steps are fractions, for seeing the whole island)
+    this.levels = [0.25, 0.5, 1, 2, 3, 4, 6, 8, 12].map((n) => n / this.dpr).filter((z) => z >= 0.16 && z <= 4);
     this.cam.zoom = this.nearestLevel(this.cam.zoom);
   }
 
@@ -166,10 +188,12 @@ export class Renderer {
   }
 
   fitZoom() {
-    // biggest zoom step that still shows most of the island
-    const z = Math.min(this.cssW / 1250, this.cssH / 720);
-    const fits = this.levels.filter((l) => l <= z && l <= 2);
-    return fits.length ? fits[fits.length - 1] : this.levels[0];
+    // biggest zoom step that still shows most of the island; on a small
+    // screen settle for a closer look at the middle of it
+    const z = Math.min(this.cssW / (MAP_W * 0.7), this.cssH / (MAP_H * 0.72));
+    const fits = this.levels.filter((l) => l <= z * 1.12 && l <= 2);
+    const pick = fits.length ? fits[fits.length - 1] : this.levels[0];
+    return Math.max(pick, this.nearestLevel(0.3));
   }
 
   zoomBy(step, clientX, clientY) {
@@ -299,31 +323,35 @@ export class Renderer {
     const visible = (it) => it.px < vx1 && it.px + it.w > vx0 && it.py < vy1 && it.py + it.h > vy0;
 
     // open sea
-    const frame = this.seaFrames[Math.floor(time * 2.2) % this.seaFrames.length];
-    for (let ty = Math.floor(vy0 / 128) * 128; ty < vy1; ty += 128) {
-      for (let tx = Math.floor(vx0 / 256) * 256; tx < vx1; tx += 256) ctx.drawImage(frame, tx, ty);
-    }
+    if (!this.seaPatterns) this.seaPatterns = this.seaFrames.map((f) => ctx.createPattern(f, 'repeat'));
+    ctx.fillStyle = this.seaPatterns[Math.floor(time * 2.2) % this.seaPatterns.length];
+    ctx.fillRect(Math.floor(vx0), Math.floor(vy0), Math.ceil(vx1 - vx0) + 1, Math.ceil(vy1 - vy0) + 1);
 
-    // land, then the water's edge on top of the beach
-    ctx.drawImage(this.terrain.baseCanvas, 0, 0);
-    this.surf.update(time, Math.max(0, this.weather.rain - 0.5) * 2);
-    ctx.drawImage(this.surf.still, this.surf.x, this.surf.y);
-    ctx.drawImage(this.surf.canvas, this.surf.x, this.surf.y);
+    // land (with the still shallows), then the moving water's edge on top
+    const view = { x0: vx0, y0: vy0, x1: vx1, y1: vy1 };
+    ctx.drawImage(this.ground, 0, 0);
+    this.surf.update(time, Math.max(0, this.weather.rain - 0.5) * 2, view, S < 1 ? 5 : 10);
+    this.surf.draw(ctx, view);
     this.actors.drawBoats(ctx);
+
+    // lots for sale (build mode): flat on the ground, under everything else
+    if (this.showLots) {
+      const lot = this.tint.lot;
+      for (const t of this.freeTiles) {
+        if (t.px < vx1 && t.px + 32 > vx0 && t.py < vy1 && t.py + 16 > vy0) ctx.drawImage(lot, t.px, t.py);
+      }
+    }
 
     // depth-sorted pass
     for (const row of this.dyn) row.length = 0;
     const moving = [];
-    this.actors.collect(moving);
+    this.actors.collect(moving, S >= 1);
     for (const m of moving) {
       if (m.row < 0 || m.row >= ROWS) continue;
       m.canvas = m.sprite.canvas;
       m.w = m.sprite.w;
       m.h = m.sprite.h;
       this.dyn[m.row].push(m);
-    }
-    if (this.showLots) {
-      for (const t of this.freeTiles) this.dyn[t.row].push({ canvas: this.tint.lot, px: t.px, py: t.py, w: 32, h: 16, key: t.row - 1 });
     }
     const g = this.ghost;
     if (g) {
@@ -337,14 +365,12 @@ export class Renderer {
         }
       }
       if (g.ok && g.spec) {
-        const s = buildingSprite(g.spec);
+        const s = g.sprite || buildingSprite(g.spec);
         const row = g.x + g.w - 1 + g.y + g.h - 1;
         this.dyn[row].push({ canvas: s.canvas, px: Math.round(sx(g.x, g.y)) - s.ax, py: Math.round(sy(g.x, g.y, g.level)) - s.ay, w: s.w, h: s.h, key: row + 1.5, alpha: 0.82 });
       }
     }
 
-    const strips = this.terrain.strips;
-    let si = 0;
     const put = (it) => {
       if (!visible(it)) return;
       if (it.alpha) ctx.globalAlpha = it.alpha;
@@ -360,10 +386,8 @@ export class Renderer {
       }
     };
     for (let d = 0; d < ROWS; d++) {
-      while (si < strips.length && strips[si].row <= d) {
-        const s = strips[si++];
-        if (s.x < vx1 && s.x + s.canvas.width > vx0 && s.y < vy1 && s.y + s.canvas.height > vy0) ctx.drawImage(s.canvas, s.x, s.y);
-      }
+      const occ = this.occluders[d];
+      for (let i = 0; i < occ.length; i++) if (visible(occ[i])) ctx.drawImage(occ[i].canvas, occ[i].px, occ[i].py);
       const a = this.static[d];
       const b = this.dyn[d];
       if (!b.length) {

@@ -40,7 +40,7 @@ function tilePath(tx, ty, dir, next, t, offset) {
 }
 
 export class Actors {
-  constructor(world, { cars = 30, people = 64 } = {}) {
+  constructor(world, { cars = 110, people = 220 } = {}) {
     this.world = world;
     this.rand = mulberry32(977);
     this.roadTiles = [];
@@ -49,8 +49,8 @@ export class Actors {
     this.people = [];
     for (let i = 0; i < cars; i++) this.cars.push(this.spawn('car', i));
     for (let i = 0; i < people; i++) this.people.push(this.spawn('person', i));
-    this.boats = [0, 1, 2, 3].map((i) => ({ a: i * 1.7 + 0.4, r: 27.5 + i * 1.2, speed: (i % 2 ? -1 : 1) * (0.012 + i * 0.003), v: i }));
-    this.gulls = [0, 1, 2, 3, 4, 5].map((i) => ({ a: i * 1.1, r: 14 + i * 3.2, speed: 0.12 + i * 0.02, cx: 20 + i * 4, cy: 36 - i * 2, alt: 60 + i * 9 }));
+    this.boats = [0, 1, 2, 3, 4, 5, 6].map((i) => ({ a: i * 0.93 + 0.4, r: N / 2 + 0.5 + (i % 4) * 1.4, speed: (i % 2 ? -1 : 1) * (0.006 + (i % 3) * 0.002), v: i }));
+    this.gulls = Array.from({ length: 14 }, (_, i) => ({ a: i * 1.1, r: 12 + (i % 5) * 4, speed: 0.1 + (i % 4) * 0.02, cx: 14 + ((i * 37) % 84), cy: 14 + ((i * 53) % 84), alt: 60 + (i % 6) * 9 }));
     this.rainy = false;
     this.clock = 0;
   }
@@ -153,7 +153,7 @@ export class Actors {
   }
 
   // Appends draw items { sprite, px, py, row, key } for the depth-sorted pass.
-  collect(out) {
+  collect(out, withPeople = true) {
     const w = this.world;
     for (const c of this.cars) {
       const p = this.position(c);
@@ -162,6 +162,7 @@ export class Actors {
       const h = w.heightAt(p.x, p.y);
       out.push({ sprite: s, px: Math.round(sx(p.x, p.y)) - s.ax, py: Math.round(sy(p.x, p.y, h)) - s.ay, row: Math.floor(p.x) + Math.floor(p.y), key: p.x + p.y });
     }
+    if (!withPeople) return; // too small to see when zoomed right out
     const frame = Math.floor(this.clock * 4) % 2;
     for (const a of this.people) {
       if (this.rainy && a.id % 3 === 0) continue; // some people stay in when it rains

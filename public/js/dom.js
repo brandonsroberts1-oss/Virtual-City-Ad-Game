@@ -21,6 +21,13 @@ export function h(tag, props, ...kids) {
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
+// Replace an element's contents. Unlike replaceChildren, this accepts nested
+// lists and skips empty entries, the same way h() does.
+export function fill(el, ...kids) {
+  el.replaceChildren(...kids.flat(Infinity).filter((k) => k != null && k !== false).map((k) => (k.nodeType ? k : document.createTextNode(String(k)))));
+  return el;
+}
+
 function makeWindow(title, body, onClose, extraClass = '') {
   const close = h('button', { class: 'btn', type: 'button', title: 'Close', 'aria-label': 'Close', onclick: () => onClose() }, 'X');
   return h(
@@ -100,7 +107,7 @@ export function drawSprite(canvas, spriteCanvas, maxScale = 4) {
 // Trim a sprite's transparent border so previews use their space well.
 export function trimmed(spriteObj) {
   if (spriteObj.trim) return spriteObj.trim;
-  const b = spriteObj.buf.bounds();
+  const b = spriteObj.bounds || spriteObj.buf.bounds();
   const cv = document.createElement('canvas');
   cv.width = b.x1 - b.x0 + 1;
   cv.height = b.y1 - b.y0 + 1;

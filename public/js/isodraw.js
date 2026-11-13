@@ -66,14 +66,17 @@ export class Iso {
       this.buf.poly(pts, paint);
       return;
     }
-    const len = xb - xa;
+    // c and len are whole pixel columns, so patterns such as "every 4th
+    // column" land cleanly whatever fraction of a tile the wall starts on
+    const c0 = Math.ceil(xa - 0.5);
+    const len = Math.max(1, Math.ceil(xb - 0.5) - c0);
     const slope = (yb - ya) / (xb - xa);
     this.buf.poly(pts, (x, y) => {
       const base = ya + (x + 0.5 - xa) * slope;
       let k = Math.floor(base - (y + 0.5));
       if (k < 0) k = 0;
       else if (k > hgt - 1) k = hgt - 1;
-      return paint(x - xa, k, len, hgt);
+      return paint(x - c0, k, len, hgt);
     });
   }
 
@@ -90,6 +93,37 @@ export class Iso {
     if (left !== null) this.wallLeft(x0, x1, y1, z0, z1, left);
     if (right !== null) this.wallRight(x1, y0, y1, z0, z1, right);
     if (top !== null) this.top(x0, y0, x1, y1, z1, top);
+  }
+
+  // A box with its camera-facing corner cut off, giving a third, flat-on wall.
+  chamferBox(x0, y0, x1, y1, c, z0, z1, { top, left, front, right }) {
+    if (left !== null) this.wall(x0, y1, x1 - c, y1, z0, z1, left);
+    if (right !== null) this.wall(x1, y1 - c, x1, y0, z0, z1, right);
+    if (front !== null) this.wall(x1 - c, y1, x1, y1 - c, z0, z1, front);
+    if (top !== null) this.face([[x0, y0, z1], [x1, y0, z1], [x1, y1 - c, z1], [x1 - c, y1, z1], [x0, y1, z1]], top);
+  }
+
+  // Round tower. paint(c, k, len, hgt, f) colours the visible half: c counts
+  // evenly around the curve, k is the height above the base and f the shade
+  // at that point of the curve.
+  roundTower(cx, cy, r, z0, z1, paint, top) {
+    const px = this.X(cx, cy);
+    const rx = r * 22.6;
+    const ry = r * 11.3;
+    const yb = this.Y(cx, cy, z0);
+    const hgt = z1 - z0;
+    const len = Math.max(1, Math.round(rx * Math.PI));
+    for (let x = Math.ceil(px - rx - 0.5); x <= Math.floor(px + rx - 0.5); x++) {
+      const u = Math.max(-1, Math.min(1, (x + 0.5 - px) / rx));
+      const base = Math.round(yb + ry * Math.sqrt(1 - u * u));
+      const c = Math.min(len - 1, Math.floor((Math.asin(u) / Math.PI + 0.5) * len));
+      const f = u < -0.45 ? 1.08 : u < 0.2 ? 1 : u < 0.62 ? 0.86 : 0.72;
+      for (let k = 0; k < hgt; k++) {
+        const col = paint(c, k, len, hgt, f);
+        if (col) this.buf.set(x, base - 1 - k, col);
+      }
+    }
+    if (top) this.buf.ellipse(px, yb - hgt, rx, ry, top);
   }
 
   // Gabled roof. axis 'x' => ridge runs along x (triangular end on the right

@@ -14,11 +14,13 @@ export const SITE = {
 export const LAND = {
   basePerTile: 2000, // cents for one tile of ordinary town land
   zones: {
-    town: { name: 'Town', mult: 1.0, blurb: 'Level streets in the middle of the island.' },
-    oceanview: { name: 'Ocean View', mult: 1.5, blurb: 'One street back from the water.' },
-    hillside: { name: 'Hillside', mult: 2.0, blurb: 'On the lower mountain terrace, looking over town.' },
+    town: { name: 'Town', mult: 1.0, blurb: 'Level streets across the plain.' },
+    downtown: { name: 'Downtown', mult: 1.3, blurb: 'The busy south-east corner, where the avenues cross.' },
+    oceanview: { name: 'Ocean View', mult: 1.5, blurb: 'One block back from the water.' },
+    hillside: { name: 'Hillside', mult: 1.8, blurb: 'The lower mountain terrace, looking over town.' },
+    ridge: { name: 'Ridge', mult: 2.4, blurb: 'The middle terrace on Ridge Road.' },
     waterfront: { name: 'Waterfront', mult: 2.5, blurb: 'Right on the beach along Ocean Drive.' },
-    summit: { name: 'Summit', mult: 3.0, blurb: 'The top terrace on Skyline Drive.' },
+    summit: { name: 'Summit', mult: 3.2, blurb: 'The top terrace on Skyline Drive.' },
   },
 };
 
@@ -82,8 +84,8 @@ export const BUILDINGS = {
     blurb: 'A tower that can be seen from anywhere on the island.',
     basePerTile: 15000,
     minLot: [2, 2],
-    maxLot: [4, 4],
-    floors: [6, 30],
+    maxLot: [5, 5],
+    floors: [6, 60],
     floorLabel: 'Floors',
     floorRate: 0.08,
     styles: {
@@ -91,6 +93,10 @@ export const BUILDINGS = {
       setback: { name: 'Setback Tower', mult: 1.25 },
       twin: { name: 'Twin Towers', mult: 1.4 },
       glass: { name: 'Glass Spire', mult: 1.6 },
+      rotunda: { name: 'Rotunda Tower', mult: 2.0 },
+      deco: { name: 'Art Deco Landmark', mult: 2.3 },
+      crystal: { name: 'Crystal Tower', mult: 2.6 },
+      citadel: { name: 'Sky Citadel', mult: 3.2, minLot: [3, 3] },
     },
   },
   farm: {
@@ -122,14 +128,70 @@ export const COLOURS = {
   midnight: { name: 'Midnight', wall: '#4a5263', roof: '#262d3a', accent: '#f2c230' },
 };
 
-// Placeholder charities. Replace the names, blurbs and URLs with the real
-// organisations you partner with; the ids are what donations are filed under.
+// The causes the island raises money for. These five are PLACEHOLDERS: the
+// names are made up. For each real organisation you partner with, fill in:
+//   name          its real name
+//   blurb         one line shown on the donation card
+//   about         a few sentences for the Charities window
+//   url           its own website
+//   registration  its registration, e.g. 'EIN 12-3456789' or 'Registered charity 1234567'
+//   verifyUrl     a page on an official register where visitors can check it
+//   placeholder   set to false once the details above are real
+// The ids (health, education ...) are what donations are filed under and what
+// the civic buildings in shared/world.js point at; leave those alone.
 export const CHARITIES = {
-  health: { name: 'Island Cancer Research Fund', blurb: 'Funds cancer research and patient support.', url: '' },
-  education: { name: 'Classroom Supplies Fund', blurb: 'Books and supplies for local classrooms.', url: '' },
-  scholarship: { name: 'First-Generation Scholarship Fund', blurb: 'Scholarships for first-generation students.', url: '' },
-  hunger: { name: 'Hunger Relief Network', blurb: 'Meals and groceries for families who need them.', url: '' },
-  parks: { name: 'Island Parks Foundation', blurb: 'Keeps parks, beaches and trails green and open.', url: '' },
+  health: {
+    name: 'Island Cancer Research Fund',
+    blurb: 'Funds cancer research and patient support.',
+    about: 'Gifts made at the hospitals go to cancer research and to practical support for patients and their families.',
+    url: '',
+    registration: '',
+    verifyUrl: '',
+    placeholder: true,
+  },
+  education: {
+    name: 'Classroom Supplies Fund',
+    blurb: 'Books and supplies for local classrooms.',
+    about: 'Gifts made at the schools buy books, art materials and equipment that teachers would otherwise pay for themselves.',
+    url: '',
+    registration: '',
+    verifyUrl: '',
+    placeholder: true,
+  },
+  scholarship: {
+    name: 'First-Generation Scholarship Fund',
+    blurb: 'Scholarships for first-generation students.',
+    about: 'Gifts made at the university fund scholarships for students who are the first in their family to go to college.',
+    url: '',
+    registration: '',
+    verifyUrl: '',
+    placeholder: true,
+  },
+  hunger: {
+    name: 'Hunger Relief Network',
+    blurb: 'Meals and groceries for families who need them.',
+    about: 'Gifts made at the food banks pay for groceries and hot meals for families who are going without.',
+    url: '',
+    registration: '',
+    verifyUrl: '',
+    placeholder: true,
+  },
+  parks: {
+    name: 'Island Parks Foundation',
+    blurb: 'Keeps parks, beaches and trails green and open.',
+    about: 'Gifts made at the parks, beach parks and lookouts go to planting, clean-ups and keeping public green space open to everyone.',
+    url: '',
+    registration: '',
+    verifyUrl: '',
+    placeholder: true,
+  },
+};
+
+// What the Charities window tells visitors about how gifts are handled. Leave
+// `statement` empty until you have decided, then write what you actually do
+// (for example how much of each gift is passed on, and how often).
+export const GIVING = {
+  statement: '',
 };
 
 export const DONATION = { minCents: 100, maxCents: 1000000, presets: [500, 1000, 2500, 10000] };
@@ -158,6 +220,11 @@ export function validateSpec(input) {
   }
   if (floors < type.floors[0] || floors > type.floors[1]) {
     return { ok: false, reason: `${type.floorLabel} must be between ${type.floors[0]} and ${type.floors[1]}.` };
+  }
+  // a few showpiece styles need room
+  const need = type.styles[s.style].minLot;
+  if (need && (w < need[0] || h < need[1])) {
+    return { ok: false, reason: `The ${type.styles[s.style].name} needs a lot of at least ${need.join('x')} tiles.` };
   }
   return { ok: true, spec: { type: s.type, style: s.style, tier: s.tier, colour: s.colour, w, h, floors } };
 }

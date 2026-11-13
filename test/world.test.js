@@ -8,7 +8,7 @@ test('the island is generated the same way every time', () => {
   assert.equal(createWorld(), world);
   assert.equal(world.type.length, N * N);
   const land = world.type.filter((t) => t !== TILE.WATER).length;
-  assert.ok(land > 1200 && land < N * N * 0.8, `unexpected land area ${land}`);
+  assert.ok(land > 6000 && land < N * N * 0.8, `unexpected land area ${land}`);
 });
 
 test('every road tile is flat or a straight ramp, and above sea level', () => {
@@ -24,7 +24,7 @@ test('every road tile is flat or a straight ramp, and above sea level', () => {
       assert.ok(lo >= 1, `${road.name} ${t.x},${t.y} is under water`);
     }
   }
-  assert.ok(count > 150);
+  assert.ok(count > 1000, 'the big island has a lot of road');
 });
 
 test('the road network is one connected piece', () => {
@@ -46,10 +46,16 @@ test('the road network is one connected piece', () => {
   assert.equal(seen.size, total);
 });
 
-test('there are waterfront, town and mountain roads to build along', () => {
+test('there is plenty to build on in every kind of location', () => {
   const zones = {};
-  for (let i = 0; i < N * N; i++) if (world.buildable[i]) zones[world.zone[i]] = (zones[world.zone[i]] || 0) + 1;
-  for (const z of ['town', 'oceanview', 'waterfront', 'hillside', 'summit']) assert.ok(zones[z] > 20, `too few ${z} lots: ${zones[z]}`);
+  let total = 0;
+  for (let i = 0; i < N * N; i++) {
+    if (!world.buildable[i]) continue;
+    total++;
+    zones[world.zone[i]] = (zones[world.zone[i]] || 0) + 1;
+  }
+  assert.ok(total > 4000, `only ${total} buildable tiles`);
+  for (const z of ['town', 'downtown', 'oceanview', 'waterfront', 'hillside', 'ridge', 'summit']) assert.ok(zones[z] > 100, `too few ${z} lots: ${zones[z]}`);
 });
 
 test('civic buildings sit on flat, dry ground and never on a road or a lot', () => {
@@ -69,28 +75,35 @@ test('civic buildings sit on flat, dry ground and never on a road or a lot', () 
 
 test('lots must be buildable, free, level and touch a road', () => {
   const free = new Set();
-  const ok = world.checkLot(14, 44, 2, 2, free);
+  const ok = world.checkLot(20, 99, 2, 2, free);
   assert.equal(ok.ok, true);
   assert.equal(ok.zone, 'waterfront');
   assert.match(ok.address, /Ocean Drive/);
   assert.deepEqual(ok.zones, { waterfront: 4 });
 
   assert.equal(world.checkLot(0, 0, 1, 1, free).ok, false, 'open sea');
-  assert.equal(world.checkLot(12, 43, 1, 1, free).ok, false, 'on a road');
-  assert.equal(world.checkLot(30, 35, 1, 1, free).ok, false, 'on the hospital');
+  assert.equal(world.checkLot(14, 98, 1, 1, free).ok, false, 'on a road');
+  assert.equal(world.checkLot(50, 71, 1, 1, free).ok, false, 'on the hospital');
   assert.equal(world.checkLot(-1, 5, 1, 1, free).ok, false, 'off the map');
-  assert.equal(world.checkLot(14, 44, 2.5, 2, free).ok, false, 'fractional size');
-  assert.match(world.checkLot(14, 45, 1, 1, free).reason, /touch a road/);
+  assert.equal(world.checkLot(20, 99, 2.5, 2, free).ok, false, 'fractional size');
+  assert.match(world.checkLot(20, 100, 1, 1, free).reason, /touch a road/);
 
-  const taken = new Set([world.ti(15, 45)]);
-  assert.match(world.checkLot(14, 44, 2, 2, taken).reason, /already owned/);
+  const taken = new Set([world.ti(21, 100)]);
+  assert.match(world.checkLot(20, 99, 2, 2, taken).reason, /already owned/);
+
+  // a whole town block is usable, right through the middle
+  assert.equal(world.checkLot(15, 71, 6, 6, free).ok, true);
 });
 
-test('mountain lots report the right zones', () => {
-  const hill = world.checkLot(15, 27, 1, 1, new Set());
-  assert.equal(hill.ok, true);
-  assert.equal(hill.zone, 'hillside');
-  const top = world.checkLot(18, 22, 1, 1, new Set());
-  assert.equal(top.ok, true);
-  assert.equal(top.zone, 'summit');
+test('every zone has roadside lots that report that zone', () => {
+  for (const zone of ['town', 'downtown', 'oceanview', 'waterfront', 'hillside', 'ridge', 'summit']) {
+    let found = null;
+    for (let y = 0; y < N && !found; y++) {
+      for (let x = 0; x < N && !found; x++) {
+        if (world.buildable[world.ti(x, y)] && world.zone[world.ti(x, y)] === zone && world.checkLot(x, y, 1, 1, new Set()).ok) found = { x, y };
+      }
+    }
+    assert.ok(found, `no roadside lot in ${zone}`);
+    assert.equal(world.checkLot(found.x, found.y, 1, 1, new Set()).zone, zone);
+  }
 });

@@ -7,28 +7,22 @@
 // Coordinates: tile (x, y) with x growing toward the lower-right of the screen
 // and y toward the lower-left. Heights live on tile *corners* (vertices), so a
 // tile can be flat or sloped. Sea level is 0, the coastal plain is level 1,
-// the two mountain terraces are levels 3 and 5.
+// the three mountain terraces are levels 3, 5 and 7.
 
-export const N = 56;            // tiles per side
+export const N = 112;           // tiles per side
 export const NV = N + 1;        // vertices per side
-export const MAX_H = 13;        // highest vertex level
+export const MAX_H = 17;        // highest vertex level
 
 export const TILE = { WATER: 0, BEACH: 1, GRASS: 2, ROCK: 3, ROAD: 4 };
 
-export const ZONES = {
-  town: { name: 'Town' },
-  oceanview: { name: 'Ocean View' },
-  waterfront: { name: 'Waterfront' },
-  hillside: { name: 'Hillside' },
-  summit: { name: 'Summit' },
-};
-
 // Ocean Drive runs along these tile lines; the coast sits a few tiles outside.
-const RING_LO = 12;
-const RING_HI = 43;
+// Streets are laid out every 7 tiles between them (6 tiles of lots per block).
+const RING_LO = 14;
+const RING_HI = 98;
 const RECT0 = RING_LO;          // core rectangle in vertex coordinates
 const RECT1 = RING_HI + 1;
-const MC = 17;                  // mountain centre (vertex)
+const MC = 36;                  // mountain centre (vertex)
+const FOOT = MC + 28;           // first tile of flat plain in front of the mountain
 const CENTER = N / 2;
 
 // Direction table shared by roads, cars and pedestrians.
@@ -80,27 +74,34 @@ function distRect(px, py) {
   return Math.hypot(dx, dy);
 }
 
-// Small sandbars off the coast and a cape at the southern tip keep the island
-// from reading as a perfect diamond.
+// Sandbars off the coast and a cape at the southern tip keep the island from
+// reading as a perfect diamond.
 const ISLETS = [
-  { x: 53.2, y: 22.5, r: 1.8 },
-  { x: 19.5, y: 53.0, r: 2.1 },
-  { x: 52.4, y: 37.0, r: 1.2 },
+  { x: 108.0, y: 44.5, r: 2.0 },
+  { x: 106.5, y: 76.0, r: 1.3 },
+  { x: 40.0, y: 108.0, r: 2.3 },
+  { x: 72.5, y: 107.5, r: 1.5 },
+  { x: 4.0, y: 82.0, r: 1.6 },
+  { x: 84.0, y: 4.5, r: 1.7 },
 ];
-const CAPES = [{ x: 47.0, y: 47.0, r: 3.8 }];
+const CAPES = [
+  { x: 102.5, y: 102.5, r: 4.6 },
+  { x: 57.0, y: 105.5, r: 3.2 },
+  { x: 105.5, y: 60.0, r: 3.0 },
+];
 
 // How far the coast sits outside the core rectangle, as a function of bearing.
 function coastReach(px, py) {
   const a = Math.atan2(py - CENTER, px - CENTER);
-  const wobble = (valueNoise(px * 0.21 + 40, py * 0.21 + 17) - 0.5) * 1.8;
-  return Math.max(4.7, 6.0 + 0.6 * Math.sin(2 * a + 0.5) + 0.45 * Math.sin(5 * a + 2.0) + wobble);
+  const wobble = (valueNoise(px * 0.16 + 40, py * 0.16 + 17) - 0.5) * 2.4;
+  return Math.max(4.7, 6.2 + 0.7 * Math.sin(3 * a + 0.5) + 0.5 * Math.sin(7 * a + 2.0) + wobble);
 }
 
 // Signed distance to the waterline in tiles: positive on land, negative at sea.
 function shoreDistance(px, py) {
   let s = coastReach(px, py) - distRect(px, py);
   // blunt the two side tips of the diamond
-  const tip = (37.6 + (valueNoise(px * 0.3, py * 0.3) - 0.5) * 2 - Math.abs(py - px)) / Math.SQRT2;
+  const tip = (RECT1 - RECT0 + 5.6 + (valueNoise(px * 0.3, py * 0.3) - 0.5) * 2 - Math.abs(py - px)) / Math.SQRT2;
   s = Math.min(s, tip);
   for (const c of CAPES) s = Math.max(s, c.r - Math.hypot(px - c.x, py - c.y));
   for (const c of ISLETS) s = Math.max(s, c.r - Math.hypot(px - c.x, py - c.y));
@@ -111,41 +112,93 @@ function squircle(dx, dy) {
   return Math.pow(Math.pow(Math.abs(dx), 6) + Math.pow(Math.abs(dy), 6), 1 / 6);
 }
 
+// Height of the land at a vertex, before roads are cut in. Terraces are
+// measured outward from the mountain centre:
+//   7..11 upper terrace (level 7)   13..18 middle terrace (level 5)
+//   20..26 lower terrace (level 3)  28+ the plain (level 1)
 function mountainLevel(vx, vy) {
   const dx = vx - MC;
   const dy = vy - MC;
   const d = squircle(dx, dy);
-  if (d >= 15.5) return 1;
-  if (d >= 14.5) return 2;
-  if (d >= 9.5) return 3;       // lower terrace (Ridge Road)
-  if (d >= 8.5) return 4;
-  if (d >= 4.5) return 5;       // upper terrace (Skyline Drive)
+  if (d >= 27.5) return 1;
+  if (d >= 26.5) return 2;
+  if (d >= 19.5) return 3;
+  if (d >= 18.5) return 4;
+  if (d >= 12.5) return 5;
+  if (d >= 11.5) return 6;
+  if (d >= 6.5) return 7;
   const round = Math.hypot(dx, dy);
-  const bump = (valueNoise(vx * 0.9 + 3.1, vy * 0.9 + 7.7) - 0.5) * 1.6;
-  const extra = Math.round((5.3 - round) * 1.5 + bump);
-  return 5 + Math.max(0, Math.min(MAX_H - 5, extra));
+  const bump = (valueNoise(vx * 0.7 + 3.1, vy * 0.7 + 7.7) - 0.5) * 2.4;
+  const extra = Math.round((6.9 - round) * 1.45 + bump);
+  return 7 + Math.max(0, Math.min(MAX_H - 7, extra));
 }
 
+// ---- streets ----------------------------------------------------------------
+
+const LO = RING_LO;
+const HI = RING_HI;
+const T3 = MC + 22;   // tile line of the lower-terrace road
+const T5 = MC + 15;   // middle terrace
+const T7 = MC + 8;    // upper terrace
+const TOWN = FOOT + 6; // first cross street on the plain
+
+// [x0, y0, x1, y1] segments, always along one axis. Where two roads share a
+// tile the first one listed names it.
 const ROADS = [
-  { name: 'Ocean Drive', segs: [[12, 33, 12, 43], [12, 43, 43, 43], [43, 43, 43, 12], [43, 12, 33, 12]] },
-  { name: 'Ridge Road', segs: [[12, 32, 12, 28], [12, 28, 28, 28], [28, 28, 28, 12], [28, 12, 32, 12]] },
-  { name: 'Center Avenue', segs: [[13, 38, 42, 38]] },
-  { name: 'East Avenue', segs: [[38, 13, 38, 42]] },
-  { name: 'Main Street', segs: [[20, 42, 20, 29]] },
-  { name: 'Summit Road', segs: [[42, 21, 24, 21]] },
-  { name: 'Skyline Drive', segs: [[14, 23, 23, 23], [23, 23, 23, 14]] },
+  { name: 'Ocean Drive', segs: [[LO, FOOT, LO, HI], [LO, HI, HI, HI], [HI, HI, HI, LO], [HI, LO, FOOT, LO]] },
+  // lower terrace, joined to both ends of Ocean Drive
+  { name: 'Hillside Avenue', segs: [[LO, FOOT - 1, LO, T3], [LO, T3, T3, T3], [T3, T3, T3, LO], [T3, LO, FOOT - 1, LO]] },
+  { name: 'Ridge Road', segs: [[22, T5, T5, T5], [T5, T5, T5, 22]] },
+  { name: 'Skyline Drive', segs: [[28, T7, T7, T7], [T7, T7, T7, 28]] },
+  // the two roads that climb the whole mountain
+  { name: 'Main Street', segs: [[42, HI, 42, T7]] },
+  { name: 'Summit Road', segs: [[HI, 35, T7, 35]] },
+  // shorter climbs to the lower terrace
+  { name: 'Hillcrest Road', segs: [[28, HI, 28, T3]] },
+  { name: 'Vista Road', segs: [[HI, 49, T3, 49]] },
+  { name: 'Cliff Road', segs: [[HI, 21, T3, 21]] },
+  // town: cross streets on the southern plain
+  { name: 'Palm Street', segs: [[LO, TOWN, HI, TOWN]] },
+  { name: 'Coral Street', segs: [[LO, TOWN + 7, HI, TOWN + 7]] },
+  { name: 'Center Avenue', segs: [[LO, TOWN + 14, HI, TOWN + 14]] },
+  { name: 'Bay Street', segs: [[LO, TOWN + 21, HI, TOWN + 21]] },
+  { name: 'Reef Road', segs: [[21, TOWN, 21, HI]] },
+  { name: 'Market Street', segs: [[35, TOWN, 35, HI]] },
+  { name: 'Harbor Street', segs: [[49, TOWN, 49, HI]] },
+  { name: 'Lagoon Street', segs: [[56, TOWN, 56, HI]] },
+  { name: 'Foothill Street', segs: [[63, TOWN, 63, HI]] },
+  // east side: avenues running the length of the island
+  { name: 'Park Avenue', segs: [[TOWN, LO, TOWN, HI]] },
+  { name: 'East Avenue', segs: [[TOWN + 7, LO, TOWN + 7, HI]] },
+  { name: 'Sunrise Avenue', segs: [[TOWN + 14, LO, TOWN + 14, HI]] },
+  { name: 'Seaview Avenue', segs: [[TOWN + 21, LO, TOWN + 21, HI]] },
+  { name: 'Orchid Street', segs: [[TOWN, 28, HI, 28]] },
+  { name: 'Garden Street', segs: [[TOWN, 42, HI, 42]] },
+  { name: 'Mango Street', segs: [[TOWN, 56, HI, 56]] },
+  { name: 'Banyan Street', segs: [[TOWN, 63, HI, 63]] },
 ];
 
 // Pre-placed civic buildings. Each one collects donations for one charity
 // (see shared/catalog.js for the charity list).
 const CIVICS = [
-  { id: 'hospital', kind: 'hospital', name: 'Island General Hospital', charity: 'health', x: 30, y: 35, w: 3, h: 3 },
-  { id: 'school', kind: 'school', name: 'Palm Grove School', charity: 'education', x: 14, y: 39, w: 3, h: 2 },
-  { id: 'university', kind: 'university', name: 'Island University', charity: 'scholarship', x: 39, y: 25, w: 4, h: 3 },
-  { id: 'foodbank', kind: 'foodbank', name: 'Community Food Bank', charity: 'hunger', x: 21, y: 39, w: 2, h: 2 },
-  { id: 'central-park', kind: 'park', name: 'Central Park', charity: 'parks', x: 26, y: 39, w: 5, h: 4 },
-  { id: 'beach-park', kind: 'beachpark', name: 'South Point Beach Park', charity: 'parks', x: 44, y: 44, w: 2, h: 2 },
-  { id: 'lookout', kind: 'lookout', name: 'Summit Lookout', charity: 'parks', x: 24, y: 24, w: 2, h: 2, level: 5 },
+  { id: 'hospital', kind: 'hospital', name: 'Island General Hospital', charity: 'health', x: 50, y: 71, w: 3, h: 3 },
+  { id: 'east-hospital', kind: 'hospital', name: 'Eastside Medical Center', charity: 'health', x: 85, y: 29, w: 3, h: 3 },
+  { id: 'school', kind: 'school', name: 'Palm Grove School', charity: 'education', x: 22, y: 78, w: 3, h: 2 },
+  { id: 'east-school', kind: 'school', name: 'Sunrise School', charity: 'education', x: 78, y: 57, w: 3, h: 2 },
+  { id: 'hill-school', kind: 'school', name: 'Hillside School', charity: 'education', x: 29, y: 59, w: 3, h: 2 },
+  { id: 'university', kind: 'university', name: 'Island University', charity: 'scholarship', x: 71, y: 85, w: 4, h: 3 },
+  { id: 'foodbank', kind: 'foodbank', name: 'Community Food Bank', charity: 'hunger', x: 36, y: 71, w: 2, h: 2 },
+  { id: 'east-foodbank', kind: 'foodbank', name: 'Eastside Food Bank', charity: 'hunger', x: 85, y: 64, w: 2, h: 2 },
+  { id: 'central-park', kind: 'park', name: 'Central Park', charity: 'parks', x: 43, y: 78, w: 6, h: 6 },
+  { id: 'west-park', kind: 'park', name: 'West End Park', charity: 'parks', x: 15, y: 85, w: 6, h: 6 },
+  { id: 'sunrise-park', kind: 'park', name: 'Sunrise Park', charity: 'parks', x: 92, y: 15, w: 6, h: 6 },
+  { id: 'orchid-park', kind: 'park', name: 'Orchid Gardens', charity: 'parks', x: 78, y: 43, w: 5, h: 4 },
+  { id: 'downtown-park', kind: 'park', name: 'Harbor Square', charity: 'parks', x: 85, y: 85, w: 5, h: 4 },
+  { id: 'beach-park', kind: 'beachpark', name: 'South Point Beach Park', charity: 'parks', x: 99, y: 99, w: 2, h: 2 },
+  { id: 'west-beach', kind: 'beachpark', name: 'West Shore Beach Park', charity: 'parks', x: 12, y: 80, w: 2, h: 2 },
+  { id: 'north-beach', kind: 'beachpark', name: 'North Shore Beach Park', charity: 'parks', x: 80, y: 12, w: 2, h: 2 },
+  { id: 'lookout', kind: 'lookout', name: 'Summit Lookout', charity: 'parks', x: 45, y: 45, w: 2, h: 2, level: 7 },
+  { id: 'ridge-lookout', kind: 'lookout', name: 'Ridge Lookout', charity: 'parks', x: 52, y: 52, w: 2, h: 2, level: 5 },
 ];
 
 const BUILD_DEPTH = 3; // how many tiles back from a road a lot may reach
@@ -172,8 +225,27 @@ export function createWorld() {
     }
   }
 
-  // Civic sites that need the ground levelled (the lookout juts out of the
-  // upper terrace like a balcony).
+  // Cut each road into the terrain so every road tile ends up either flat or
+  // a clean one-level ramp along the road, whatever the hillside was doing.
+  for (const r of ROADS) {
+    for (const [x0, y0, x1, y1] of r.segs) {
+      const alongX = y0 === y1;
+      const a = alongX ? Math.min(x0, x1) : Math.min(y0, y1);
+      const b = alongX ? Math.max(x0, x1) : Math.max(y0, y1);
+      const c = alongX ? y0 : x0;
+      const at = (v, side) => (alongX ? vi(v, c + side) : vi(c + side, v));
+      const prof = [];
+      for (let v = a; v <= b + 1; v++) prof.push(Math.max(1, Math.round((hv[at(v, 0)] + hv[at(v, 1)]) / 2)));
+      for (let i = 1; i < prof.length; i++) prof[i] = Math.max(prof[i - 1] - 1, Math.min(prof[i - 1] + 1, prof[i]));
+      for (let v = a; v <= b + 1; v++) {
+        hv[at(v, 0)] = prof[v - a];
+        hv[at(v, 1)] = prof[v - a];
+      }
+    }
+  }
+
+  // Civic sites that need the ground levelled (the lookouts jut out of their
+  // terraces like balconies).
   for (const c of CIVICS) {
     if (c.level == null) continue;
     for (let y = c.y; y <= c.y + c.h; y++) {
@@ -202,7 +274,7 @@ export function createWorld() {
       let t;
       if (Math.max(...s4) <= 0) t = TILE.WATER;
       else if (hi <= 1 && (distRect(x + 0.5, y + 0.5) > 2.1 || shoreDistance(x + 0.5, y + 0.5) < 2.4)) t = TILE.BEACH;
-      else if (hi - lo >= 2 || (lo + hi) / 2 >= 6.5) t = TILE.ROCK;
+      else if (hi - lo >= 2 || (lo + hi) / 2 >= 7.5) t = TILE.ROCK;
       else if (lo === 0) t = hi <= 1 ? TILE.BEACH : TILE.ROCK;
       else t = TILE.GRASS;
       type[ti(x, y)] = t;
@@ -263,12 +335,14 @@ export function createWorld() {
       const cy = y + 0.5;
       let z = 'town';
       const top = lv >= 0 ? lv : Math.max(...corners(x, y));
-      if (top >= 5) z = 'summit';
+      if (top >= 7) z = 'summit';
+      else if (top >= 5) z = 'ridge';
       else if (top >= 3) z = 'hillside';
       else if (distRect(cx, cy) > 0) z = 'waterfront';
       else {
         const inset = Math.min(cx - RECT0, RECT1 - cx, cy - RECT0, RECT1 - cy);
         if (inset < 4) z = 'oceanview';
+        else if (cx > TOWN && cy > TOWN) z = 'downtown';
       }
       zone[i] = z;
     }
@@ -322,7 +396,7 @@ export function createWorld() {
         }
       } else if (t === TILE.ROCK) {
         if (r < 0.2) decor.push({ kind: 'boulder', x: x + ox, y: y + oy, v });
-        else if (r > 0.82 && Math.max(...corners(x, y)) < 8) decor.push({ kind: 'pine', x: x + ox, y: y + oy, v });
+        else if (r > 0.82 && Math.max(...corners(x, y)) < 10) decor.push({ kind: 'pine', x: x + ox, y: y + oy, v });
       }
     }
   }
@@ -399,7 +473,7 @@ export function createWorld() {
     }
     if (!frontage) return { ok: false, reason: 'A lot must touch a road.' };
     // The lot is named after its best zone.
-    const rank = ['town', 'oceanview', 'hillside', 'waterfront', 'summit'];
+    const rank = ['town', 'downtown', 'oceanview', 'hillside', 'ridge', 'waterfront', 'summit'];
     const main = Object.keys(zones).sort((a, b) => rank.indexOf(b) - rank.indexOf(a))[0];
     return { ok: true, level: lv, zones, zone: main, address: addressOf(x, y, w, h) };
   }

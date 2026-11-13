@@ -2,7 +2,7 @@
 
 import { openDb } from '../server/db.js';
 import { createApp } from '../server/app.js';
-import { createPayments } from '../server/payments.js';
+import { createPayments } from '../server/payments/index.js';
 
 export async function startApp(extraEnv = {}, fetchImpl) {
   const env = { RATE_LIMITS: 'off', ...extraEnv };
@@ -13,7 +13,7 @@ export async function startApp(extraEnv = {}, fetchImpl) {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const base = `http://127.0.0.1:${server.address().port}`;
-  return { db, base, close: () => new Promise((r) => server.close(r)) };
+  return { db, app, base, close: () => new Promise((r) => server.close(r)) };
 }
 
 // A tiny browser stand-in that remembers cookies.

@@ -63,7 +63,7 @@ export class Weather {
     this.shadows = [0, 1, 2, 3].map((i) => makeCloud(11 + i * 5, [8, 22, 48], 120));
     this.clouds = [0, 1, 2, 3].map((i) => makeCloud(11 + i * 5, [236, 240, 246], 190));
     this.sky = [];
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < 40; i++) {
       this.sky.push({ x: hash2(i, 1) * (MAP_W + 400) - 200, y: hash2(i, 2) * MAP_H, v: i % 4, speed: 5 + hash2(i, 3) * 6 });
     }
     this.drops = [];

@@ -157,6 +157,7 @@ function genHome(iso, s, p, seed) {
   const lux = tier === 'luxury';
   lawn(iso, 0, 0, w, h);
   if (prem) backHedges(iso, w, h);
+  iso.sign = { kind: 'flag', x: 0.07, y: h - 0.07, z: 0, w: 14, h: 10, pole: 24 };
 
   let x0 = 0.16;
   let y0 = 0.14;
@@ -266,6 +267,13 @@ function genShop(iso, s, p, seed) {
   const y1 = h - (h > 1 ? 0.42 : 0.22);
   const G = 9; // ground floor height
   const H = G + (floors - 1) * FLOOR + 2;
+  {
+    // where the owner's logo billboard stands: the middle of the roof
+    const short = Math.min(x1 - x0, y1 - y0);
+    const roofTop = style === 'market' ? H + Math.round(5 + short * 4) - 1 : style === 'boutique' ? H + 5 : H;
+    const bw = Math.max(16, Math.min(30, Math.round((x1 - x0) * 16 * 0.75)));
+    iso.sign = { kind: 'billboard', x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: roofTop, w: bw, h: Math.round(bw * 0.62), post: 3 };
+  }
   const front = (shadeF) => (c, k, len) => {
     // shop window with a dark base and mullions
     if (k === 0) return shade(DARK, shadeF);
@@ -349,6 +357,7 @@ function genMansion(iso, s, p, seed) {
   const lux = tier === 'luxury';
   lawn(iso, 0, 0, w, h);
   backHedges(iso, w, h);
+  iso.sign = { kind: 'flag', x: 0.09, y: h - 0.09, z: 0, w: 18, h: 12, pole: 32 };
   tree(iso, 0.32, 0.36, seed % 9);
   tree(iso, w - 0.3, 0.34, (seed >>> 2) % 9);
 
@@ -444,99 +453,394 @@ function genMansion(iso, s, p, seed) {
 }
 
 // ---- skyscrapers ---------------------------------------------------------------
+//
+// Towers are assembled from a small architectural vocabulary: facade
+// textures, plain and faceted shafts, round shafts, tiered crowns, fins,
+// sky bridges and roof kit. Dearer styles and finer finishes use more of it.
 
 const SKY_FLOOR = 5;
+const LOBBY = 7;
+const SIDE = { left: 1, front: 0.9, right: 0.76 };
 
-function genSkyscraper(iso, s, p, seed) {
-  const { w, h, floors, style, tier } = s;
-  const prem = tier !== 'standard';
-  const lux = tier === 'luxury';
-  plaza(iso, 0, 0, w, h, hex('#d2cec2'));
-  const x0 = 0.14;
-  const y0 = 0.14;
-  const x1 = w - 0.14;
-  const y1 = h - 0.14;
-  const LOBBY = 6;
-  const H = LOBBY + floors * SKY_FLOOR;
-  const crown = lux ? GOLD : 0;
-  const tint = mix(hex('#3f7fb0'), p.accent, 0.3);
-  const lobby = (f) => (c, k, len) => (k === LOBBY - 1 ? shade(p.wall, 0.7 * f) : c % 4 === 0 || c >= len - 1 ? shade(p.wall, f) : shade(hex('#7fb4d6'), f));
-  const stone = wallPair(p, { floorH: SKY_FLOOR, winH: 3, winW: 2, gap: 1, sill: 1, margin: 1, seed, litChance: p.dark ? 0.4 : 0.09, baseH: LOBBY, trim: crown });
-  const withLobby = (pair) => ({
-    left: (c, k, len, hgt) => (k < LOBBY ? lobby(1)(c, k, len) : pair.left(c, k, len, hgt)),
-    right: (c, k, len, hgt) => (k < LOBBY ? lobby(0.8)(c, k, len) : pair.right(c, k, len, hgt)),
-  });
-  const glassPair = (sd, z0 = LOBBY) => ({
-    left: curtainWall({ glass: tint, glass2: shade(tint, 1.2), mullion: shade(tint, 0.6), floorH: SKY_FLOOR, bay: 4, seed: sd, lit: LIT, litChance: 0.07, crown, baseH: z0, base: shade(p.wall, 0.9) }),
-    right: curtainWall({ glass: shade(tint, 0.72), glass2: shade(tint, 0.85), mullion: shade(tint, 0.45), floorH: SKY_FLOOR, bay: 4, seed: sd + 3, lit: shade(LIT, 0.9), litChance: 0.07, crown: crown ? shade(crown, 0.8) : 0, baseH: z0, base: shade(p.wall, 0.72) }),
-  });
-  const antenna = (x, y, z, len) => {
-    iso.pole(x, y, z, z + len, hex('#8a8e96'));
-    iso.buf.set(iso.X(x, y), iso.Y(x, y, z + len), hex('#e2493a'));
-  };
-  const roofKit = (a0, b0, a1, b1, z) => {
-    flatRoof(iso, a0, b0, a1, b1, z, shade(p.wall, 0.86), hex('#8f8c83'));
-    if (lux && a1 - a0 > 0.9 && b1 - b0 > 0.9) {
-      // helipad
-      const cxp = (a0 + a1) / 2;
-      const cyp = (b0 + b1) / 2;
-      iso.buf.ellipse(iso.X(cxp, cyp), iso.Y(cxp, cyp, z), 9, 4.5, hex('#5a5f68'));
-      iso.buf.ellipse(iso.X(cxp, cyp), iso.Y(cxp, cyp, z), 7, 3.5, (px, py) => (Math.abs(px - iso.X(cxp, cyp)) < 1.2 || (Math.abs(py - iso.Y(cxp, cyp, z)) < 0.8 && Math.abs(px - iso.X(cxp, cyp)) < 4) ? hex('#f2c230') : hex('#5a5f68')));
-    } else if (prem && a1 - a0 > 0.7) {
-      iso.top(a0 + 0.14, b0 + 0.14, a1 - 0.14, (b0 + b1) / 2, z, hex('#5fa04a'));
-      iso.box(a0 + 0.14, (b0 + b1) / 2 + 0.08, a0 + 0.44, (b0 + b1) / 2 + 0.3, z, z + 4, { top: hex('#d6d3c9'), left: hex('#b0ada3'), right: hex('#8f8c83') });
-    } else {
-      iso.box(a0 + 0.14, b0 + 0.14, a0 + 0.5, b0 + 0.4, z, z + 4, { top: hex('#d6d3c9'), left: hex('#b0ada3'), right: hex('#8f8c83') });
-    }
-  };
+const flick = (seed, a, b) => {
+  const r = Math.abs(Math.sin((a + 1) * 12.9898 + (b + 1) * 78.233 + seed * 37.719)) * 43758.5453;
+  return r - Math.floor(r);
+};
 
-  if (style === 'setback') {
-    const pair = withLobby(stone);
-    const z1 = LOBBY + Math.round(floors * 0.55) * SKY_FLOOR;
-    const z2 = LOBBY + Math.round(floors * 0.84) * SKY_FLOOR;
-    const upper = wallPair(p, { floorH: SKY_FLOOR, winH: 4, winW: 1, gap: 1, sill: 1, margin: 1, seed: seed + 1, litChance: p.dark ? 0.4 : 0.1, trim: crown });
-    iso.box(x0, y0, x1, y1, 0, z1, { top: shade(p.wall, 0.86), left: pair.left, right: pair.right });
-    const i1 = Math.min(0.22, (x1 - x0) * 0.12);
-    iso.box(x0 + i1, y0 + i1, x1 - i1, y1 - i1, z1, z2, { top: shade(p.wall, 0.86), left: upper.left, right: upper.right });
+// One facade texture; f darkens it for a wall that is turned from the light.
+function facade(kind, o, f = 1) {
+  const wall = shade(o.wall, f);
+  const glass = shade(o.glass, f);
+  const glass2 = shade(o.glass2 || shade(o.glass, 1.22), f);
+  const lit = shade(LIT, f < 1 ? 0.92 : 1);
+  const chance = o.lit ?? 0.08;
+  const seed = o.seed || 1;
+  const trim = o.trim ? shade(o.trim, f) : 0;
+  let paint;
+  if (kind === 'piers') {
+    // strong vertical piers with dark window strips between them
+    const pier = shade(o.wall, f * 1.06);
+    const span = shade(o.spandrel || shade(o.wall, 0.62), f);
+    paint = (c, k, len) => {
+      if (c % 4 < 2 || c >= len - 1) return pier;
+      if (k % SKY_FLOOR === SKY_FLOOR - 1) return span;
+      return flick(seed, Math.floor(c / 4), Math.floor(k / SKY_FLOOR)) < chance ? lit : glass;
+    };
+  } else if (kind === 'ribbon') {
+    // continuous bands of window and wall
+    paint = (c, k) => {
+      if (k % SKY_FLOOR >= 3) return wall;
+      if (c % 7 === 0) return shade(glass, 0.8);
+      return flick(seed, Math.floor(c / 7), Math.floor(k / SKY_FLOOR)) < chance ? lit : glass;
+    };
+  } else if (kind === 'diagrid') {
+    // glass behind a lattice of diagonal braces
+    const brace = shade(o.mullion || WHITE, f);
+    paint = (c, k) => {
+      const m = 10;
+      if ((((c + k) % m) + m) % m === 0 || (((c - k) % m) + m) % m === 0) return brace;
+      if (k % SKY_FLOOR === SKY_FLOOR - 1) return shade(glass, 0.8);
+      if (flick(seed, Math.floor(c / 4), Math.floor(k / SKY_FLOOR)) < chance) return lit;
+      return (Math.floor(c / 5) + Math.floor(k / SKY_FLOOR)) % 2 ? glass : glass2;
+    };
+  } else if (kind === 'glass') {
+    const mull = shade(o.mullion || shade(o.glass, 0.6), f);
+    paint = (c, k) => {
+      if (k % SKY_FLOOR === SKY_FLOOR - 1 || c % 4 === 0) return mull;
+      const r = flick(seed, Math.floor(c / 4), Math.floor(k / SKY_FLOOR));
+      return r < chance ? lit : r > 0.55 ? glass2 : glass;
+    };
+  } else {
+    // stone with punched windows
+    paint = windowWall({ wall, glass, lit, floorH: SKY_FLOOR, winH: 3, winW: 2, gap: 1, sill: 1, margin: 1, seed, litChance: chance });
+  }
+  return (c, k, len, hgt) => (trim && k >= hgt - 1 ? trim : paint(c, k, len, hgt));
+}
+
+const material = (kind, o) => ({ left: facade(kind, o, SIDE.left), front: facade(kind, o, SIDE.front), right: facade(kind, o, SIDE.right) });
+
+// Put a glazed lobby with a canopy line under a material.
+function withLobby(m, p, lux) {
+  const lobby = (f) => (c, k, len) => (k === LOBBY - 1 ? shade(lux ? GOLD : p.accentD, f) : c % 4 === 0 || c >= len - 1 ? shade(p.wall, f) : shade(hex('#7fb4d6'), f));
+  const wrap = (fn, f) => (c, k, len, hgt) => (k < LOBBY ? lobby(f)(c, k, len) : fn(c, k - LOBBY, len, hgt - LOBBY));
+  return { left: wrap(m.left, SIDE.left), front: wrap(m.front, SIDE.front), right: wrap(m.right, SIDE.right) };
+}
+
+// Overlay something on every face of a material (a garden notch, a light strip ...).
+const overlay = (m, fn) => ({
+  left: (c, k, len, hgt) => fn(c, k, len, hgt, SIDE.left, 'left') || m.left(c, k, len, hgt),
+  front: (c, k, len, hgt) => fn(c, k, len, hgt, SIDE.front, 'front') || m.front(c, k, len, hgt),
+  right: (c, k, len, hgt) => fn(c, k, len, hgt, SIDE.right, 'right') || m.right(c, k, len, hgt),
+});
+
+// Reserve a spot on a left-facing wall for the owner's logo. (ax, ay) is the
+// wall's left end, len its length in tiles, z0..zMax the free height.
+function wallSign(c, ax, ay, len, z0, zMax) {
+  const px = Math.round(len * 16);
+  const sw = Math.max(12, Math.min(48, px - 6));
+  const sh = Math.min(Math.round(sw * 0.62), zMax - z0 - 2);
+  if (sh >= 8 && px >= 16) c.sign = { kind: 'wall', x: ax, y: ay, z: z0, w: sw, h: sh, inset: Math.round((px - sw) / 2) };
+}
+
+function antenna(iso, x, y, z, len) {
+  iso.pole(x, y, z, z + len, hex('#8a8e96'));
+  iso.buf.set(iso.X(x, y), iso.Y(x, y, z + len), hex('#e2493a'));
+}
+
+// A tall needle with rings, for landmark crowns.
+function spire(iso, x, y, z, len, metal) {
+  iso.pole(x, y, z, z + Math.round(len * 0.45), metal, 3);
+  iso.pole(x, y, z, z + len, shade(metal, 1.15));
+  const px = Math.round(iso.X(x, y));
+  for (const t of [0.45, 0.7]) iso.buf.rect(px - 2, Math.round(iso.Y(x, y, z + len * t)), 5, 1, shade(metal, 0.8));
+  iso.buf.set(px, Math.round(iso.Y(x, y, z + len)), hex('#ff4a3a'));
+}
+
+function helipad(iso, cx, cy, z) {
+  const px = iso.X(cx, cy);
+  const py = iso.Y(cx, cy, z);
+  iso.buf.ellipse(px, py, 9, 4.5, hex('#5a5f68'));
+  iso.buf.ellipse(px, py, 7, 3.5, (x, y) => (Math.abs(x - px) < 1.2 || (Math.abs(y - py) < 0.8 && Math.abs(x - px) < 4) ? hex('#f2c230') : hex('#5a5f68')));
+}
+
+function roofGarden(iso, a0, b0, a1, b1, z, seed) {
+  iso.top(a0, b0, a1, b1, z, (x, y) => (hash2(x + seed, y) < 0.12 ? HEDGE[2] : hex('#5fa04a')));
+  if (a1 - a0 > 0.5) iso.stamp(decorSprite('bush', seed % 3), (a0 + a1) / 2, (b0 + b1) / 2, z);
+}
+
+// Whatever sits on a flat roof, by finish.
+function roofKit(iso, a0, b0, a1, b1, z, p, t, seed) {
+  flatRoof(iso, a0, b0, a1, b1, z, shade(p.wall, 0.86), hex('#8f8c83'));
+  const roomy = a1 - a0 > 0.9 && b1 - b0 > 0.9;
+  if (t.lux && roomy) helipad(iso, (a0 + a1) / 2, (b0 + b1) / 2, z);
+  else if (t.prem && a1 - a0 > 0.7) {
+    roofGarden(iso, a0 + 0.14, b0 + 0.14, a1 - 0.14, (b0 + b1) / 2, z, seed);
+    iso.box(a0 + 0.14, (b0 + b1) / 2 + 0.08, a0 + 0.44, (b0 + b1) / 2 + 0.3, z, z + 4, { top: hex('#d6d3c9'), left: hex('#b0ada3'), right: hex('#8f8c83') });
+  } else {
+    iso.box(a0 + 0.14, b0 + 0.14, a0 + Math.min(0.5, a1 - a0 - 0.2), b0 + Math.min(0.4, b1 - b0 - 0.2), z, z + 4, { top: hex('#d6d3c9'), left: hex('#b0ada3'), right: hex('#8f8c83') });
+  }
+}
+
+// Stacked, shrinking tiers with lit "sunburst" windows: an Art Deco crown.
+function tieredCrown(iso, a0, b0, a1, b1, z, tiers, metal, step) {
+  const burst = (f) => (c, k, len, hgt) => {
+    const mid = (len - 1) / 2;
+    if (k === hgt - 1) return shade(metal, f * 1.15);
+    return Math.abs(c - mid) <= (hgt - 1 - k) * 0.9 + 0.5 && (c + k) % 2 === 0 ? shade(LIT, f) : shade(metal, f);
+  };
+  let zz = z;
+  for (let t = 0; t < tiers; t++) {
+    const i = step * (t + 1);
+    if (a1 - a0 - 2 * i < 0.12 || b1 - b0 - 2 * i < 0.12) break;
+    const th = 6 - Math.min(2, t);
+    iso.box(a0 + i, b0 + i, a1 - i, b1 - i, zz, zz + th, { top: shade(metal, 1.2), left: burst(1), right: burst(0.78) });
+    zz += th;
+  }
+  return zz;
+}
+
+const SKY = {
+  // ---- plain office block
+  slab(c) {
+    const { iso, p, t, x0, y0, x1, y1, H, seed } = c;
+    const m = withLobby(material('grid', { wall: p.wall, glass: GLASS, seed, lit: c.lit, trim: t.lux ? GOLD : 0 }), p, t.lux);
+    const pier = (fn, f) => (cc, k, len, hgt) => (k >= LOBBY && (cc < 2 || cc >= len - 2) ? shade(p.accentD, f) : fn(cc, k, len, hgt));
+    iso.box(x0, y0, x1, y1, 0, H, { top: null, left: pier(m.left, 1), right: pier(m.right, 0.8) });
+    roofKit(iso, x0, y0, x1, y1, H, p, t, seed);
+    antenna(iso, x0 + 0.3, y0 + 0.3, H, 12);
+    wallSign(c, x0, y1, x1 - x0, LOBBY + 4, H);
+  },
+
+  // ---- three stepped tiers under a pitched crown
+  setback(c) {
+    const { iso, p, t, x0, y0, x1, y1, H, seed, floors, w } = c;
+    const base = withLobby(material('grid', { wall: p.wall, glass: GLASS, seed, lit: c.lit }), p, t.lux);
+    const upper = material('piers', { wall: p.wall, glass: hex('#27394f'), spandrel: p.roofD, seed: seed + 1, lit: c.lit + 0.04, trim: t.lux ? GOLD : 0 });
+    const z1 = LOBBY + Math.round(floors * 0.5) * SKY_FLOOR;
+    const z2 = LOBBY + Math.round(floors * 0.8) * SKY_FLOOR;
+    const i1 = Math.min(0.26, (x1 - x0) * 0.12);
     const i2 = i1 * 2.1;
+    iso.box(x0, y0, x1, y1, 0, z1, { top: shade(p.wall, 0.86), left: base.left, right: base.right });
+    wallSign(c, x0, y1, x1 - x0, LOBBY + 4, z1);
+    if (t.lux) roofGarden(iso, x0 + 0.03, y1 - i1 + 0.02, x1 - 0.03, y1 - 0.03, z1, seed);
+    iso.box(x0 + i1, y0 + i1, x1 - i1, y1 - i1, z1, z2, { top: shade(p.wall, 0.86), left: upper.left, right: upper.right });
+    if (t.prem) {
+      // corner buttresses
+      for (const [bx, by] of [[x0 + i1, y1 - i1], [x1 - i1, y1 - i1], [x1 - i1, y0 + i1]]) {
+        iso.box(bx - 0.05, by - 0.05, bx + 0.05, by + 0.05, z1, z2 + 5, { top: shade(p.wall, 1.1), left: shade(p.wall, 1.04), right: shade(p.wall, 0.84) });
+      }
+    }
     iso.box(x0 + i2, y0 + i2, x1 - i2, y1 - i2, z2, H, { top: null, left: upper.left, right: upper.right });
-    iso.hip(x0 + i2, y0 + i2, x1 - i2, y1 - i2, H, 8 + w * 2, { lit: lux ? GOLD : p.roof, dark: lux ? shade(GOLD, 0.75) : p.roofD });
-    antenna(w / 2, h / 2, H + 8 + w * 2, 12);
-  } else if (style === 'twin') {
+    const rise = 8 + w * 2;
+    iso.hip(x0 + i2, y0 + i2, x1 - i2, y1 - i2, H, rise, { lit: t.lux ? GOLD : p.roof, dark: t.lux ? shade(GOLD, 0.75) : p.roofD });
+    antenna(iso, (x0 + x1) / 2, (y0 + y1) / 2, H + rise, 12);
+  },
+
+  // ---- two glass towers on a shared podium, joined by a bridge
+  twin(c) {
+    const { iso, p, t, x0, y0, x1, y1, H, seed } = c;
     const podium = LOBBY + 3 * SKY_FLOOR;
-    const pp = withLobby(stone);
-    iso.box(x0, y0, x1, y1, 0, podium, { top: null, left: pp.left, right: pp.right });
-    flatRoof(iso, x0, y0, x1, y1, podium, shade(p.wall, 0.86), prem ? hex('#5fa04a') : hex('#8f8c83'));
+    const pm = withLobby(material('grid', { wall: p.wall, glass: GLASS, seed, lit: c.lit }), p, t.lux);
+    iso.box(x0, y0, x1, y1, 0, podium, { top: null, left: pm.left, right: pm.right });
+    flatRoof(iso, x0, y0, x1, y1, podium, shade(p.wall, 0.86), t.prem ? hex('#5fa04a') : hex('#8f8c83'));
     const xm = (x0 + x1) / 2;
-    const ga = glassPair(seed, 0);
-    const gb = glassPair(seed + 11, 0);
+    const crown = t.lux ? GOLD : 0;
+    const ga = material('glass', { glass: c.tint, seed, lit: c.lit, trim: crown });
+    const gb = material('glass', { glass: c.tint, seed: seed + 11, lit: c.lit, trim: crown });
     const hb = podium + Math.round((H - podium) * 0.84);
     iso.box(x0 + 0.06, y0 + 0.1, xm - 0.1, y1 - 0.1, podium, H, { top: null, left: ga.left, right: ga.right });
-    roofKit(x0 + 0.06, y0 + 0.1, xm - 0.1, y1 - 0.1, H);
-    antenna(x0 + 0.2, y0 + 0.25, H, 10);
-    // skybridge
+    wallSign(c, x0 + 0.06, y1 - 0.1, xm - 0.16 - x0, podium + 4, H);
+    roofKit(iso, x0 + 0.06, y0 + 0.1, xm - 0.1, y1 - 0.1, H, p, t, seed);
+    antenna(iso, x0 + 0.2, y0 + 0.25, H, 10);
     const zb = podium + Math.round((hb - podium) * 0.6);
     iso.box(xm - 0.1, (y0 + y1) / 2 - 0.12, xm + 0.1, (y0 + y1) / 2 + 0.12, zb, zb + 5, { top: WHITE, left: hex('#7fb4d6'), right: hex('#5b86b0') });
     iso.box(xm + 0.1, y0 + 0.1, x1 - 0.06, y1 - 0.1, podium, hb, { top: null, left: gb.left, right: gb.right });
-    roofKit(xm + 0.1, y0 + 0.1, x1 - 0.06, y1 - 0.1, hb);
-  } else if (style === 'glass') {
-    const g = glassPair(seed);
-    const shaft = LOBBY + Math.round(floors * 0.86) * SKY_FLOOR;
-    iso.box(x0, y0, x1, y1, 0, shaft, { top: null, left: (c, k, len, hgt) => (k < LOBBY ? lobby(1)(c, k, len) : g.left(c, k, len, hgt)), right: (c, k, len, hgt) => (k < LOBBY ? lobby(0.8)(c, k, len) : g.right(c, k, len, hgt)) });
-    // tapered crown
-    const rise = H - shaft + 10 + w * 3;
-    iso.hip(x0, y0, x1, y1, shaft, rise, { lit: lux ? mix(tint, GOLD, 0.55) : shade(tint, 1.25), dark: lux ? mix(shade(tint, 0.7), GOLD, 0.35) : shade(tint, 0.8) });
-    antenna(w / 2, h / 2, shaft + rise, 14);
-  } else {
-    // office slab with coloured corner piers
-    const pair = withLobby(stone);
-    const pier = (fn, f) => (c, k, len, hgt) => (k >= LOBBY && (c < 2 || c >= len - 2) ? shade(p.accentD, f) : fn(c, k, len, hgt));
-    iso.box(x0, y0, x1, y1, 0, H, { top: null, left: pier(pair.left, 1), right: pier(pair.right, 0.8) });
-    roofKit(x0, y0, x1, y1, H);
-    antenna(x0 + 0.3, y0 + 0.3, H, 12);
-  }
+    roofKit(iso, xm + 0.1, y0 + 0.1, x1 - 0.06, y1 - 0.1, hb, p, t, seed + 1);
+  },
 
-  if (prem && (w > 2 || h > 2)) {
+  // ---- faceted glass shaft tapering to a point
+  glass(c) {
+    const { iso, p, t, x0, y0, x1, y1, H, seed, floors, w } = c;
+    const cut = Math.min(0.5, (x1 - x0) * 0.26);
+    const g = withLobby(material('glass', { glass: c.tint, seed, lit: c.lit, trim: t.lux ? GOLD : 0 }), p, t.lux);
+    const shaft = LOBBY + Math.round(floors * 0.8) * SKY_FLOOR;
+    iso.chamferBox(x0, y0, x1, y1, cut, 0, shaft, { top: shade(c.tint, 0.7), ...g });
+    wallSign(c, x0, y1, x1 - cut - x0, LOBBY + 4, shaft);
+    const i = Math.min(0.2, (x1 - x0) * 0.1);
+    const g2 = material('glass', { glass: shade(c.tint, 1.12), seed: seed + 5, lit: c.lit });
+    iso.chamferBox(x0 + i, y0 + i, x1 - i, y1 - i, cut * 0.8, shaft, H, { top: null, ...g2 });
+    const rise = 12 + w * 4;
+    const lit = t.lux ? mix(c.tint, GOLD, 0.6) : shade(c.tint, 1.3);
+    iso.hip(x0 + i, y0 + i, x1 - i, y1 - i, H, rise, { lit, dark: shade(lit, 0.7) });
+    spire(iso, (x0 + x1) / 2, (y0 + y1) / 2, H + rise, 16, c.metal);
+  },
+
+  // ---- Art Deco landmark: turrets, buttressed shaft, sunburst crown, needle
+  deco(c) {
+    const { iso, p, t, x0, y0, x1, y1, seed, floors } = c;
+    const o = { wall: p.wall, glass: hex('#27394f'), spandrel: p.roofD, seed, lit: c.lit + 0.03 };
+    const span = x1 - x0;
+    const z1 = LOBBY + Math.round(floors * 0.32) * SKY_FLOOR;
+    const z2 = LOBBY + Math.round(floors * 0.72) * SKY_FLOOR;
+    const z3 = LOBBY + Math.round(floors * 0.92) * SKY_FLOOR;
+    const i1 = Math.min(0.34, span * 0.12);
+    const i2 = i1 * 1.9;
+    const base = withLobby(material('piers', { ...o, trim: c.metal }), p, t.lux);
+    // grand entrance arch
+    const portal = (fn) => (cc, k, len, hgt) => {
+      const d = Math.abs(cc - (len - 1) / 2);
+      if (k < 9 && d <= 3.5) return k === 8 || d > 2.5 || (k === 7 && d > 1.5) ? c.metal : hex('#1c2530');
+      return fn(cc, k, len, hgt);
+    };
+    iso.box(x0, y0, x1, y1, 0, z1, { top: shade(p.wall, 0.84), left: portal(base.left), right: base.right });
+    wallSign(c, x0, y1, x1 - x0, 12, z1);
+    if (t.prem) roofGarden(iso, x0 + 0.04, y1 - i1 + 0.03, x1 - 0.04, y1 - 0.04, z1, seed);
+    const mid = material('piers', o);
+    iso.box(x0 + i1, y0 + i1, x1 - i1, y1 - i1, z1, z2, { top: shade(p.wall, 0.84), left: mid.left, right: mid.right });
+    // buttress fins climbing past the setback, and corner turrets on the base
+    for (const [bx, by] of [[x0 + i1, y1 - i1], [x1 - i1, y1 - i1], [x1 - i1, y0 + i1]]) {
+      iso.box(bx - 0.06, by - 0.06, bx + 0.06, by + 0.06, z1, z2 + 7, { top: c.metal, left: shade(p.wall, 1.08), right: shade(p.wall, 0.86) });
+    }
+    const tw = Math.min(0.22, i1 * 0.9);
+    for (const [bx, by] of [[x0, y1 - tw], [x1 - tw, y1 - tw], [x1 - tw, y0]]) {
+      iso.box(bx, by, bx + tw, by + tw, z1, z1 + 7, { top: null, left: shade(p.wall, 1.05), right: shade(p.wall, 0.82) });
+      iso.hip(bx, by, bx + tw, by + tw, z1 + 7, 5, { lit: c.metal, dark: shade(c.metal, 0.72), over: 0.02 });
+    }
+    const top = material('piers', { ...o, seed: seed + 3, trim: c.metal });
+    iso.box(x0 + i2, y0 + i2, x1 - i2, y1 - i2, z2, z3, { top: null, left: top.left, right: top.right });
+    const zc = tieredCrown(iso, x0 + i2, y0 + i2, x1 - i2, y1 - i2, z3, t.lux ? 5 : t.prem ? 4 : 3, c.metal, Math.max(0.05, (span - 2 * i2) * 0.085));
+    spire(iso, (x0 + x1) / 2, (y0 + y1) / 2, zc, t.lux ? 30 : 22, c.metal);
+  },
+
+  // ---- crystal: braced, faceted prism with a slanted top and a sky garden
+  crystal(c) {
+    const { iso, p, t, x0, y0, x1, y1, H, seed, floors, w } = c;
+    const podium = LOBBY + 2 * SKY_FLOOR;
+    const pm = withLobby(material('ribbon', { wall: WHITE, glass: shade(c.tint, 0.8), seed, lit: c.lit }), p, t.lux);
+    iso.box(x0, y0, x1, y1, 0, podium, { top: null, left: pm.left, right: pm.right });
+    flatRoof(iso, x0, y0, x1, y1, podium, WHITE, t.prem ? hex('#5fa04a') : hex('#cfd3d6'));
+    const i = Math.min(0.2, (x1 - x0) * 0.08);
+    const a0 = x0 + i;
+    const b0 = y0 + i;
+    const a1 = x1 - i;
+    const b1 = y1 - i;
+    const cut = Math.min(0.62, (a1 - a0) * 0.32);
+    const brace = t.lux ? GOLD : hex('#e9eef2');
+    const T = H - 4;
+    const garden = podium + Math.round(floors * 0.5) * SKY_FLOOR;
+    let m = material('diagrid', { glass: c.tint, glass2: shade(c.tint, 1.25), mullion: brace, seed, lit: c.lit });
+    m = overlay(m, (cc, k, len, hgt, f, side) => {
+      const z = k + podium;
+      // an open garden floor cut through the tower
+      if (z >= garden && z < garden + 6) return z === garden ? shade(WHITE, f) : cc % 5 === 2 && z < garden + 4 ? HEDGE[2] : shade(hex('#1b242c'), f);
+      // a strip of light running up the facet
+      if (side === 'front' && Math.abs(cc - (len - 1) / 2) < 1.2) return k % 3 === 0 ? shade(p.accent, 1.2) : LIT;
+      return 0;
+    });
+    iso.chamferBox(a0, b0, a1, b1, cut, podium, T, { top: null, ...m });
+    wallSign(c, a0, b1, a1 - cut - a0, podium + 5, garden);
+    // the top is sliced at an angle, rising toward the back
+    const rise = 14 + w * 6;
+    const D = b1 - b0;
+    const zf = T + (rise * cut) / D;
+    const roof = shade(c.tint, 1.4);
+    iso.face([[a1, b1 - cut, T], [a1, b0, T], [a1, b0, T + rise], [a1, b1 - cut, zf]], shade(c.tint, 0.62));
+    iso.face([[a1 - cut, b1, T], [a1, b1 - cut, T], [a1, b1 - cut, zf]], shade(c.tint, 0.8));
+    iso.face([[a0, b1, T], [a1 - cut, b1, T], [a1, b1 - cut, zf], [a1, b0, T + rise], [a0, b0, T + rise]], (x, y) => ((x + 2 * y) % 9 === 0 ? brace : roof));
+    spire(iso, a0 + 0.12, b0 + 0.12, T + rise, 14, c.metal);
+  },
+
+  // ---- round tower on a podium, banded with rings, under a dome
+  rotunda(c) {
+    const { iso, p, t, x0, y0, x1, y1, H, seed } = c;
+    const podium = LOBBY + 2 * SKY_FLOOR;
+    const pm = withLobby(material('grid', { wall: p.wall, glass: GLASS, seed, lit: c.lit }), p, t.lux);
+    iso.box(x0, y0, x1, y1, 0, podium, { top: null, left: pm.left, right: pm.right });
+    flatRoof(iso, x0, y0, x1, y1, podium, shade(p.wall, 0.86), t.prem ? hex('#5fa04a') : hex('#8f8c83'));
+    c.sign = { kind: 'billboard', x: x0 + 0.34, y: y1 - 0.22, z: podium, w: 20, h: 13, post: 3 };
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const r = (Math.min(x1 - x0, y1 - y0) / 2) * 0.86;
+    const ring = t.lux ? GOLD : WHITE;
+    iso.roundTower(cx, cy, r, podium, H, (cc, k, len, hgt, f) => {
+      if (k % 45 >= 42 || k >= hgt - 2) return shade(ring, f);
+      if (k % SKY_FLOOR >= 3) return shade(p.wall, f);
+      if (cc % 6 === 0) return shade(c.tint, f * 0.7);
+      return flick(seed, Math.floor(cc / 6), Math.floor(k / SKY_FLOOR)) < c.lit ? shade(LIT, f) : shade(c.tint, f);
+    }, shade(p.wall, 0.9));
+    // crown: a drum and a dome
+    const r2 = r * 0.68;
+    iso.roundTower(cx, cy, r2, H, H + 6, (cc, k, len, hgt, f) => (cc % 3 === 0 ? shade(p.wall, f) : shade(c.tint, f * 1.1)), 0);
+    iso.dome(cx, cy, r2, H + 6, Math.round(6 + r * 8), t.lux ? GOLD : p.roof);
+    spire(iso, cx, cy, H + 10 + Math.round(r * 8), t.prem ? 18 : 10, c.metal);
+  },
+
+  // ---- sky citadel: a cluster of towers on one podium, bridged together
+  citadel(c) {
+    const { iso, p, t, x0, y0, x1, y1, H, seed, w, h } = c;
+    const podium = LOBBY + 3 * SKY_FLOOR;
+    const sx = x1 - x0;
+    const sy = y1 - y0;
+    const pm = withLobby(material('grid', { wall: p.wall, glass: GLASS, seed, lit: c.lit, trim: c.metal }), p, t.lux);
+    iso.box(x0, y0, x1, y1, 0, podium, { top: null, left: pm.left, right: pm.right });
+    flatRoof(iso, x0, y0, x1, y1, podium, shade(p.wall, 0.86), hex('#5fa04a'));
+    const up = (f) => podium + Math.round(((H - podium) * f) / SKY_FLOOR) * SKY_FLOOR;
+    const bridge = (ax, ay, bx, by, z) => iso.box(ax, ay, bx, by, z, z + 5, { top: WHITE, left: hex('#7fb4d6'), right: hex('#5b86b0') });
+
+    // tallest tower at the back: stone piers and a tiered crown
+    const A = [x0 + 0.05, y0 + 0.05, x0 + sx * 0.52, y0 + sy * 0.52];
+    const am = material('piers', { wall: p.wall, glass: hex('#27394f'), spandrel: p.roofD, seed, lit: c.lit + 0.03, trim: c.metal });
+    const za = up(0.9);
+    iso.box(...A, podium, za, { top: null, left: am.left, right: am.right });
+    const zc = tieredCrown(iso, ...A, za, t.lux ? 5 : 4, c.metal, Math.max(0.05, (A[2] - A[0]) * 0.08));
+    spire(iso, (A[0] + A[2]) / 2, (A[1] + A[3]) / 2, zc, t.lux ? 28 : 20, c.metal);
+
+    // right-hand glass tower with a helipad
+    const B = [x0 + sx * 0.6, y0 + 0.08, x1 - 0.05, y0 + sy * 0.5];
+    const zb = up(0.7);
+    bridge(A[2], y0 + sy * 0.2, B[0], y0 + sy * 0.32, up(0.42));
+    const bm = material('glass', { glass: c.tint, seed: seed + 7, lit: c.lit, trim: t.lux ? GOLD : 0 });
+    iso.box(...B, podium, zb, { top: null, left: bm.left, right: bm.right });
+    roofKit(iso, ...B, zb, p, { prem: true, lux: true }, seed);
+
+    // left-hand tower in bands, with a rooftop pool
+    const C = [x0 + 0.08, y0 + sy * 0.6, x0 + sx * 0.5, y1 - 0.05];
+    const zcTop = up(0.54);
+    bridge(x0 + sx * 0.2, A[3], x0 + sx * 0.32, C[1], up(0.3));
+    const cm = material('ribbon', { wall: WHITE, glass: shade(c.tint, 0.85), seed: seed + 13, lit: c.lit });
+    iso.box(...C, podium, zcTop, { top: null, left: cm.left, right: cm.right });
+    wallSign(c, C[0], C[3], C[2] - C[0], podium + 4, zcTop);
+    flatRoof(iso, ...C, zcTop, WHITE, hex('#d9d5c8'));
+    if (t.prem) iso.top(C[0] + 0.12, C[1] + 0.1, C[2] - 0.12, C[3] - 0.1, zcTop, (x, y) => (hash2(x, y >> 1) > 0.8 ? WATER_L : WATER));
+
+    // a faceted crystal at the front corner on big lots
+    if (w >= 4 && h >= 4) {
+      const Dq = [x0 + sx * 0.6, y0 + sy * 0.6, x1 - 0.08, y1 - 0.08];
+      const zd = up(0.36);
+      const dm = material('diagrid', { glass: shade(c.tint, 1.1), mullion: t.lux ? GOLD : WHITE, seed: seed + 21, lit: c.lit });
+      iso.chamferBox(...Dq, (Dq[2] - Dq[0]) * 0.35, podium, zd, { top: shade(c.tint, 1.35), ...dm });
+    } else {
+      roofGarden(iso, x0 + sx * 0.6, y0 + sy * 0.62, x1 - 0.1, y1 - 0.1, podium, seed);
+    }
+  },
+};
+
+function genSkyscraper(iso, s, p, seed) {
+  const { w, h, floors, style, tier } = s;
+  const t = { prem: tier !== 'standard', lux: tier === 'luxury' };
+  plaza(iso, 0, 0, w, h, hex('#d2cec2'));
+  const c = {
+    iso, s, p, t, seed, w, h, floors,
+    x0: 0.14, y0: 0.14, x1: w - 0.14, y1: h - 0.14,
+    H: LOBBY + floors * SKY_FLOOR,
+    tint: mix(hex('#3f7fb0'), p.accent, 0.2),
+    metal: t.lux ? GOLD : hex('#b4bec8'),
+    lit: p.dark ? 0.34 : 0.08,
+  };
+  (SKY[style] || SKY.slab)(c);
+  // towers too small for a wall sign get a billboard on the plaza instead
+  iso.sign = c.sign || { kind: 'billboard', x: 0.5, y: h - 0.1, z: 0, w: 20, h: 13, post: 8 };
+  if (t.prem && (w > 2 || h > 2)) {
     tree(iso, 0.1, h - 0.06, seed % 9);
     tree(iso, w - 0.08, h - 0.08, (seed >>> 2) % 9);
   }
@@ -579,6 +883,7 @@ function genFarm(iso, s, p, seed) {
   const prem = tier !== 'standard';
   const lux = tier === 'luxury';
   const rnd = mulberry32(seed);
+  iso.sign = { kind: 'billboard', x: 0.55, y: h - 0.16, z: 0, w: 20, h: 13, post: 7 };
   const yardX = Math.min(w, 1.5 + n * 0.12);
   const yardY = Math.min(h, 1.15 + n * 0.08);
   const inYard = (u, v) => u < yardX && v < yardY;
@@ -694,10 +999,10 @@ const GENERATORS = { home: genHome, shop: genShop, mansion: genMansion, skyscrap
 
 function heightBudget(s) {
   switch (s.type) {
-    case 'skyscraper': return 6 + s.floors * SKY_FLOOR + 60;
+    case 'skyscraper': return LOBBY + s.floors * SKY_FLOOR + 96;
     case 'mansion': return s.floors * FLOOR + 44;
     case 'farm': return 46;
-    default: return s.floors * 8 + 40;
+    default: return s.floors * 8 + 56;
   }
 }
 
@@ -711,6 +1016,9 @@ export function buildingSprite(spec) {
   const gen = GENERATORS[spec.type] || genHome;
   gen(iso, spec, palette(spec.colour), specSeed(spec));
   s = sprite(iso.buf, iso.ox, iso.oy);
+  s.key = key;
+  // where a logo goes, in sprite pixels (see logos.js)
+  if (iso.sign) s.sign = { ...iso.sign, px: Math.ceil(iso.X(iso.sign.x, iso.sign.y) - 0.5), py: Math.round(iso.Y(iso.sign.x, iso.sign.y, iso.sign.z)) };
   cache.set(key, s);
   return s;
 }

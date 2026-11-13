@@ -1,9 +1,10 @@
-// Rasterises the island's ground (grass, sand, rock, roads) into one big
-// pixel image, plus per-row "occluder" strips of the raised mountain tiles so
-// things standing behind a hillside get hidden properly.
+// Rasterises the island's ground (grass, sand, rock, roads and the still
+// shallows) into one big pixel image, plus small "occluder" sprites for the
+// cliff tiles that can hide things standing behind them.
 
 import { N, TILE, hash2, valueNoise } from '/shared/world.js';
 import { PixelBuf, hex, shade } from './pixel.js';
+import { shallowColour } from './surf.js';
 import { sx, sy, MAP_W, MAP_H, MARGIN } from './iso.js';
 
 const PAL = {
@@ -133,9 +134,23 @@ export function renderTerrain(world) {
   const base = new PixelBuf(MAP_W, MAP_H);
   // Signed shore distance for every pixel at sea level (99 = inland).
   const shoreMap = new Float32Array(MAP_W * MAP_H).fill(-99);
-  const strips = new Map(); // row -> { buf, x, y }
+  const occluderTiles = [];
 
   const UV = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  const lowest = (x, y) => (world.inTiles(x, y) ? Math.min(...world.corners(x, y)) : 0);
+
+  // A tile hides what stands behind it only where the ground rises toward the
+  // camera faster than one level per row (cliffs, the back of the peak).
+  const hidesSomething = (x, y, top) => {
+    for (let i = 0; i <= top; i++) {
+      for (let j = 0; j <= top; j++) {
+        const rows = i + j;
+        if (rows === 0 || rows >= top || Math.abs(i - j) > 3) continue;
+        if (top - lowest(x - i, y - j) > rows) return true;
+      }
+    }
+    return false;
+  };
 
   const lo0 = -MARGIN;
   const hi0 = N - 1 + MARGIN;
@@ -160,18 +175,9 @@ export function renderTerrain(world) {
       const hi = Math.max(...hs);
       const coastal = type === TILE.WATER || lo === 0;
       const tile = { type, mask: inside ? world.roadMask[i] : 0, buildable: inside && world.buildable[i] === 1, top: hi };
-      // road tiles never hide anything behind them, and leaving them out keeps
-      // cars from being clipped as they cross from one tile to the next
-      const occluder = hi >= 2 && type !== TILE.ROAD;
-      let strip = null;
-      if (occluder) {
-        strip = strips.get(d);
-        if (!strip) {
-          strip = { tiles: [] };
-          strips.set(d, strip);
-        }
-        strip.tiles.push({ pts, minX: Math.min(...pts.map((p) => p[0])), maxX: Math.max(...pts.map((p) => p[0])), minY: Math.min(...pts.map((p) => p[1])), maxY: Math.max(...pts.map((p) => p[1])) });
-      }
+      // Road tiles are left out: they never hide anything, and it keeps cars
+      // from being clipped as they cross from one tile to the next.
+      if (hi >= 2 && type !== TILE.ROAD && hidesSomething(x, y, hi)) occluderTiles.push({ pts, row: d });
 
       // choose the diagonal that keeps flat halves flat
       const tris = hs[0] === hs[2] || hs[1] !== hs[3]
@@ -189,8 +195,18 @@ export function renderTerrain(world) {
           const u = w0 * ua[0] + w1 * ub[0] + w2 * uc[0];
           const v = w0 * ua[1] + w1 * ub[1] + w2 * uc[1];
           const k = py * MAP_W + px;
-          // exact (not per-tile interpolated) distance keeps the waterline smooth
-          shoreMap[k] = coastal ? world.shoreAt(x + u, y + v) : 99;
+          if (!coastal) {
+            shoreMap[k] = 99;
+          } else {
+            // exact (not per-tile interpolated) distance keeps the waterline smooth
+            const s = world.shoreAt(x + u, y + v);
+            shoreMap[k] = s;
+            if (s < 0) {
+              // under water: paint the still shallows straight into the image
+              base.data[k] = shallowColour(s, px, py);
+              return;
+            }
+          }
           if (type === TILE.WATER) return;
           let col = groundColor(tile, u, v, px, py);
           if (light !== 1) col = shade(col, light);
@@ -200,22 +216,17 @@ export function renderTerrain(world) {
     }
   }
 
-  // Occluder strips are cut straight out of the finished base image, so they
-  // always match it pixel for pixel.
-  const stripList = [];
-  for (const [row, strip] of strips) {
-    const x0 = Math.floor(Math.min(...strip.tiles.map((t) => t.minX)));
-    const x1 = Math.ceil(Math.max(...strip.tiles.map((t) => t.maxX)));
-    const y0 = Math.floor(Math.min(...strip.tiles.map((t) => t.minY)));
-    const y1 = Math.ceil(Math.max(...strip.tiles.map((t) => t.maxY)));
-    const buf = new PixelBuf(x1 - x0, y1 - y0);
-    for (const t of strip.tiles) {
-      const p = t.pts.map(([px, py]) => [px - x0, py - y0]);
-      buf.poly(p, (px, py) => base.data[(py + y0) * MAP_W + (px + x0)]);
-    }
-    stripList.push({ row, x: x0, y: y0, canvas: buf.toCanvas() });
-  }
-  stripList.sort((a, b) => a.row - b.row);
+  // Occluders are cut straight out of the finished image, one small sprite
+  // per tile, so they always match it pixel for pixel.
+  const occluders = occluderTiles.map((t) => {
+    const x0 = Math.floor(Math.min(...t.pts.map((p) => p[0])));
+    const x1 = Math.ceil(Math.max(...t.pts.map((p) => p[0])));
+    const y0 = Math.floor(Math.min(...t.pts.map((p) => p[1])));
+    const y1 = Math.ceil(Math.max(...t.pts.map((p) => p[1])));
+    const buf = new PixelBuf(Math.max(1, x1 - x0), Math.max(1, y1 - y0));
+    buf.poly(t.pts.map(([px, py]) => [px - x0, py - y0]), (px, py) => base.data[(py + y0) * MAP_W + (px + x0)]);
+    return { row: t.row, px: x0, py: y0, w: buf.w, h: buf.h, canvas: buf.toCanvas() };
+  });
 
-  return { base, baseCanvas: base.toCanvas(), shoreMap, strips: stripList };
+  return { baseCanvas: base.toCanvas(), shoreMap, occluders };
 }

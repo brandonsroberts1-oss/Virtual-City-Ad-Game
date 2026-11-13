@@ -78,7 +78,7 @@ app.syncGhost = () => {
   const spec = { type: b.type, style: b.style, tier: b.tier, colour: b.colour, floors: b.floors, w: b.w, h: b.h };
   const placed = b.x != null && b.lot ? { x: b.x, y: b.y, ok: true, level: b.lot.level } : null;
   const g = app.hoverLot || placed;
-  renderer.ghost = g ? { ...g, w: b.w, h: b.h, spec } : null;
+  renderer.ghost = g ? { ...g, w: b.w, h: b.h, spec, sprite: ui.buildLook() } : null;
   renderer.selected = placed ? { x: b.x, y: b.y, w: b.w, h: b.h, level: placed.level, top: null } : null;
 };
 
@@ -305,6 +305,7 @@ $('#topbar').addEventListener('click', (e) => {
     case 'explore': app.setMode('explore'); break;
     case 'build': app.setMode(app.mode === 'build' ? 'explore' : 'build'); break;
     case 'leaders': ui.openLeaders(); break;
+    case 'charities': ui.openCharities(); break;
     case 'about': ui.openAbout(); break;
     case 'account': ui.openAccount(); break;
     case 'zoom-in': renderer.zoomBy(1); break;
